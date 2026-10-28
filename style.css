@@ -1,0 +1,134 @@
+:root {
+  color-scheme: light dark;
+  --background: #f8faf9;
+  --text: #182c28;
+  --muted: #455e58;
+  --accent: #12634e;
+  --border: #bdcec7;
+  --focus: #865100;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.65;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0 1.25rem;
+  background: var(--background);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.site-header {
+  padding: 3rem 0 2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.wordmark {
+  display: inline-block;
+  margin: 0 0 1rem;
+  color: var(--accent);
+  font-size: 1.25rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+
+h1, h2 {
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+h1 {
+  max-width: 25ch;
+  margin: 0;
+  font-size: clamp(1.75rem, 5vw, 2.75rem);
+  font-weight: 650;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+}
+
+main {
+  padding: 2rem 0;
+}
+
+section + section {
+  margin-top: 2rem;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+li + li {
+  margin-top: 0.5rem;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 0.1em;
+}
+
+a:hover {
+  text-decoration-thickness: 0.18em;
+}
+
+a:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
+.draft-note, .site-footer {
+  color: var(--muted);
+}
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  justify-content: space-between;
+  padding: 1.25rem 0 2rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9375rem;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+.skip-link {
+  position: absolute;
+  top: 0.75rem;
+  left: 1.25rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--background);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #111d19;
+    --text: #edf4f0;
+    --muted: #b2c8bd;
+    --accent: #8bdfbd;
+    --border: #4c6558;
+    --focus: #ffd38a;
+  }
+}
