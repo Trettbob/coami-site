@@ -10,7 +10,8 @@ from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCUMENT_SUFFIXES = {'.html', '.htm', '.xhtml', '.svg'}
-EXPECTED_DOCUMENTS = {'index.html', 'privacy.html', '404.html', 'coami-icon.svg',
+HTML_PAGES = ('index.html', 'features.html', 'how-it-works.html', 'pilot.html', 'about.html', 'contact.html', 'privacy.html', '404.html')
+EXPECTED_DOCUMENTS = {*HTML_PAGES, 'coami-icon.svg',
                       'img/coami-logo.svg', 'img/coami-logo-light-on-dark.svg'}
 FONT_HASHES = {
     'fonts/urbanist-latin-var.woff2': '0de96f83a43992027ec811e68a9ff1617580d3438cf6740448421683e66b4785',

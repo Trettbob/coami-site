@@ -1,6 +1,6 @@
 """Owner-reviewed markup vocabulary shared by every content check.
 
-Derived from the approved v4 HTML, retaining r4's SVG element vocabulary. Changes
+Derived from the approved v5 HTML, retaining r4's SVG element vocabulary. Changes
 need owner review (/scripts/ is owned in CODEOWNERS), including later P2/P3
 pages, fonts/*.woff2, navigation or inline SVG marks. Extend these data tables
 and the corresponding resource/visibility/discovery policies together.
@@ -8,15 +8,15 @@ and the corresponding resource/visibility/discovery policies together.
 
 # Attribute names use the strict tokenizer's ASCII-lowercase representation.
 HTML_ATTRIBUTES = {
-    'a': {'aria-label', 'class', 'href'},
+    'a': {'aria-label', 'aria-current', 'class', 'href'},
     'article': {'class'}, 'body': set(), 'div': {'class'},
-    'footer': {'class'}, 'h1': set(), 'h2': {'class', 'id'}, 'h3': set(),
-    'head': set(), 'header': {'class'}, 'html': {'lang'}, 'li': set(),
+    'footer': {'class'}, 'h1': {'id'}, 'h2': {'class', 'id'}, 'h3': set(),
+    'head': set(), 'header': {'class'}, 'html': {'lang'}, 'li': {'class'},
     'img': {'src', 'alt', 'class', 'width', 'height'},
-    'link': {'href', 'rel', 'type', 'sizes'}, 'main': {'id'},
+    'link': {'href', 'rel', 'type', 'sizes'}, 'main': {'id', 'tabindex'},
     'meta': {'charset', 'content', 'http-equiv', 'name'},
     'nav': {'aria-label'}, 'ol': {'class'}, 'p': {'class'},
-    'section': {'aria-labelledby', 'id'}, 'span': {'class'},
+    'section': {'aria-labelledby', 'id', 'class'}, 'span': {'class'},
     'title': set(), 'ul': {'class'},
 }
 # Preserve r4's SVG XML policy (XML names are case-sensitive). Per-element
@@ -33,11 +33,11 @@ SVG_ELEMENT_ATTRIBUTES = {
     **{tag.lower(): set() for tag in SVG_ELEMENTS},
     'svg': {'aria-hidden', 'class', 'focusable', 'viewbox', 'role', 'aria-label'},
     'rect': {'fill', 'height', 'rx', 'width', 'x', 'y'},
-    'path': {'d', 'fill'},
+    'path': {'d', 'fill', 'class'},
     'text': {'fill', 'font-family', 'font-size', 'font-weight', 'text-anchor', 'x', 'y'},
     'circle': {'class', 'cx', 'cy', 'fill', 'r'},
 }
-# Approved v4 relative resources and Security ruling addendum 2 CSP.
+# Approved v5 relative resources and Security ruling addendum 2 CSP.
 CSP = "default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
 STYLESHEET = 'style.css'
 FAVICON = 'coami-icon.svg'

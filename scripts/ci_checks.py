@@ -29,7 +29,8 @@ def commands(kind, checks, root):
     if kind == 'privacy-text':
         return [script('check_privacy_text.py', '--', str(root))]
     if kind == 'invariants':
-        return [script('check_invariants.py', '--', str(root))]
+        return [script('check_invariants.py', '--', str(root)),
+                script('check_v5.py', '--', str(root))]
     if kind == 'html':
         # Explicit trusted config disables candidate config discovery. ./ paths
         # come after the validator's option terminator; no shell splitting.

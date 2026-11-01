@@ -1,26 +1,36 @@
-"""Class placement pinned from each approved v4 page, never from candidate HTML."""
+"""Class placement pinned from each approved v5 page, never from candidate HTML."""
 from site_common import hidden
 
 # All unlisted places on/inside/above the notice or footer require NO classes.
 # Paths use same-tag sibling ordinals, so a class cannot migrate to another p.
-LEGAL_CLASSES = {
-    'index.html': {
-        'html[1]/body[1]/footer[1]': ('site',),
-        'html[1]/body[1]/footer[1]/div[1]': ('wrap',),
-    },
-    '404.html': {
-        'html[1]/body[1]/footer[1]': ('site',),
-        'html[1]/body[1]/footer[1]/div[1]': ('wrap',),
-    },
-    'privacy.html': {
-        'html[1]/body[1]/footer[1]': ('site',),
-        'html[1]/body[1]/footer[1]/div[1]': ('wrap',),
-        'html[1]/body[1]/main[1]/div[1]': ('wrap',),
-        'html[1]/body[1]/main[1]/div[1]/article[1]': ('legal', 'text'),
-        'html[1]/body[1]/main[1]/div[1]/article[1]/p[1]': ('meta',),
-        'html[1]/body[1]/main[1]/div[1]/article[1]/ul[1]': ('plain',),
-    },
-}
+LEGAL_CLASSES = {'index.html': {'html[1]/body[1]/div[1]': ('footer-band',),
+                'html[1]/body[1]/div[1]/footer[1]': ('site',),
+                'html[1]/body[1]/div[1]/footer[1]/div[1]': ('wrap',)},
+ 'features.html': {'html[1]/body[1]/div[1]': ('footer-band',),
+                   'html[1]/body[1]/div[1]/footer[1]': ('site',),
+                   'html[1]/body[1]/div[1]/footer[1]/div[1]': ('wrap',)},
+ 'how-it-works.html': {'html[1]/body[1]/div[1]': ('footer-band',),
+                       'html[1]/body[1]/div[1]/footer[1]': ('site',),
+                       'html[1]/body[1]/div[1]/footer[1]/div[1]': ('wrap',)},
+ 'pilot.html': {'html[1]/body[1]/div[1]': ('footer-band',),
+                'html[1]/body[1]/div[1]/footer[1]': ('site',),
+                'html[1]/body[1]/div[1]/footer[1]/div[1]': ('wrap',)},
+ 'about.html': {'html[1]/body[1]/div[1]': ('footer-band',),
+                'html[1]/body[1]/div[1]/footer[1]': ('site',),
+                'html[1]/body[1]/div[1]/footer[1]/div[1]': ('wrap',)},
+ 'contact.html': {'html[1]/body[1]/div[1]': ('footer-band',),
+                  'html[1]/body[1]/div[1]/footer[1]': ('site',),
+                  'html[1]/body[1]/div[1]/footer[1]/div[1]': ('wrap',)},
+ 'privacy.html': {'html[1]/body[1]/main[1]/div[1]': ('wrap',),
+                  'html[1]/body[1]/main[1]/div[1]/article[1]': ('legal', 'text'),
+                  'html[1]/body[1]/main[1]/div[1]/article[1]/p[1]': ('meta',),
+                  'html[1]/body[1]/main[1]/div[1]/article[1]/ul[1]': ('plain',),
+                  'html[1]/body[1]/div[1]': ('footer-band',),
+                  'html[1]/body[1]/div[1]/footer[1]': ('site',),
+                  'html[1]/body[1]/div[1]/footer[1]/div[1]': ('wrap',)},
+ '404.html': {'html[1]/body[1]/div[1]': ('footer-band',),
+              'html[1]/body[1]/div[1]/footer[1]': ('site',),
+              'html[1]/body[1]/div[1]/footer[1]/div[1]': ('wrap',)}}
 VISIBILITY_ATTRIBUTES = {'hidden', 'popover', 'inert', 'aria-hidden', 'style'}
 
 

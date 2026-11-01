@@ -22,7 +22,7 @@ ABSOLUTE_LINKS = {
 }
 RESOURCE_TAGS = {'link', 'script', 'img', 'image', 'use', 'iframe', 'object',
                  'embed', 'audio', 'video', 'source', 'track', 'input', 'style', 'base'}
-FONT_FACE = '@font-face{font-family:"Urbanist";src:url(fonts/urbanist-latin-var.woff2) format("woff2");font-weight:100 900;font-display:swap}'
+FONT_FACE = '@font-face {\n  font-family: Urbanist;\n  src: url("fonts/urbanist-latin-var.woff2") format("woff2");\n  font-weight: 100 900;\n  font-style: normal;\n  font-display: swap;\n}'
 LINK_RELS = {'preload', 'prefetch', 'preconnect', 'dns-prefetch', 'modulepreload', 'manifest'}
 
 

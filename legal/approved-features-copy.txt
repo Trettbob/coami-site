@@ -1,0 +1,202 @@
+{
+  "heading": "What we're building into CoAmi",
+  "subheading": "Here's what's planned. Some of it is being built for our private pilot.",
+  "disclaimer": "CoAmi is in development. Features, timing and what's included may change. Nothing on this page is an offer or a promise that a feature will be available.",
+  "sections": [
+    {
+      "heading": "The core product",
+      "items": [
+        [
+          "Ami",
+          "An AI assistant that talks your idea through with you and helps turn it into a plan.",
+          "Planned for the private pilot"
+        ],
+        [
+          "Blueprint",
+          "A clear written plan of what will be built, broken into small steps you can read and approve.",
+          "Planned for the private pilot"
+        ],
+        [
+          "Your own project space",
+          "Each project gets its own private code repository, set up for you.",
+          "Planned for the private pilot"
+        ],
+        [
+          "Building",
+          "CoAmi builds your project in small steps, one approved step at a time, and shows its progress as it goes.",
+          "Planned for the private pilot"
+        ],
+        [
+          "Previews and feedback",
+          "See a preview of what's been built and tell Ami what to change.",
+          "Planned for the private pilot"
+        ],
+        [
+          "Progress emails",
+          "An email when a preview is ready, when Ami needs your answer, or when a build is blocked.",
+          "Planned for the private pilot"
+        ],
+        [
+          "Needs You",
+          "One place where decisions that need you wait for your approval.",
+          "Planned"
+        ]
+      ]
+    },
+    {
+      "heading": "The Business Companion, designed to work together",
+      "items": [
+        [
+          "Shared customer record",
+          "One record for each of your customers that every feature uses, so details don't need typing twice.",
+          "Planned"
+        ],
+        [
+          "Ami across your business",
+          "Ami shows what needs you today and drafts replies and follow-ups for you to approve.",
+          "Planned"
+        ],
+        [
+          "Email",
+          "Read and reply to your email inside CoAmi, with Ami's suggested replies waiting for your OK.",
+          "Planned"
+        ],
+        [
+          "Calendar",
+          "Your diary, with meetings Ami suggests from your emails, sent only when you approve.",
+          "Planned"
+        ],
+        [
+          "Tasks",
+          "Track your team's work and follow-ups, linked to the customers they're for.",
+          "Planned"
+        ],
+        [
+          "Shared docs",
+          "Store and share your files in one place, linked to customers and projects.",
+          "Planned"
+        ],
+        [
+          "Email signatures",
+          "Consistent, branded signatures for everyone in your team.",
+          "Planned"
+        ],
+        [
+          "Content writing",
+          "Draft posts, pages and copy with Ami, ready for your approval.",
+          "Planned"
+        ],
+        [
+          "Email marketing",
+          "Send newsletters and campaigns only to people who've agreed to hear from you, with unsubscribe built in.",
+          "Planned"
+        ],
+        [
+          "SMS and WhatsApp",
+          "Message customers from the same place as your email, with their consent respected.",
+          "Planned"
+        ],
+        [
+          "Audio Studio",
+          "Create on-hold messages and other business audio.",
+          "Planned"
+        ],
+        [
+          "SEO tools",
+          "Check how your website shows up in search and what to improve.",
+          "Planned"
+        ],
+        [
+          "HR",
+          "Keep staff records and HR tasks in a restricted area that only chosen people can see.",
+          "Planned"
+        ]
+      ]
+    },
+    {
+      "heading": "More planned features",
+      "items": [
+        [
+          "Customers and deals",
+          "Keep track of your customers, companies and deals in one pipeline.",
+          "Planned"
+        ],
+        [
+          "Bookings",
+          "Let customers book appointments with you online.",
+          "Planned"
+        ],
+        [
+          "Quotes and e-signature",
+          "Send quotes and proposals and have them signed online.",
+          "Planned"
+        ],
+        [
+          "Invoices and expenses",
+          "Create invoices, mark them paid and log your expenses.",
+          "Planned"
+        ],
+        [
+          "Shared inbox and live chat",
+          "Answer customer questions from email, chat, SMS and WhatsApp in one inbox.",
+          "Planned"
+        ],
+        [
+          "Reviews",
+          "Ask customers for reviews and reply to them in one place.",
+          "Planned"
+        ],
+        [
+          "Social media",
+          "Plan and schedule your posts and reply to messages.",
+          "Planned"
+        ],
+        [
+          "Brand kit and design",
+          "Keep your logo, colours and fonts in one place and make simple designs.",
+          "Planned"
+        ],
+        [
+          "Forms and surveys",
+          "Collect enquiries and feedback that go straight into your customer records.",
+          "Planned"
+        ],
+        [
+          "Landing pages and websites",
+          "Build pages and sites for your business.",
+          "Planned"
+        ],
+        [
+          "Wiki",
+          "Your team's know-how and processes in one place.",
+          "Planned"
+        ],
+        [
+          "Meeting notes",
+          "Turn meetings into notes and tasks, with everyone told when a meeting is recorded.",
+          "Planned"
+        ],
+        [
+          "Business dashboard",
+          "Key numbers from across CoAmi on one screen.",
+          "Planned"
+        ],
+        [
+          "Policies and contracts",
+          "Templates for UK businesses to start from. They're not legal advice.",
+          "Planned"
+        ],
+        [
+          "Recruitment",
+          "Post jobs and manage applicants.",
+          "Planned"
+        ],
+        [
+          "Team chat",
+          "Talk with your team inside CoAmi.",
+          "Planned"
+        ]
+      ]
+    }
+  ]
+}

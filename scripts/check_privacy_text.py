@@ -16,7 +16,7 @@ D26_SHA256 = '6842c06ee3bd94f90a16f4fe5b040b1454716e3a54f103cf2474a9075adc8852'
 D26_PATH = Path('legal/D26-website-privacy-notice.md')
 # A conservative visibility proof: approve CSS changes explicitly, rather than
 # pretending that an offline HTML parser implements the browser CSS cascade.
-CSS_SHA256 = '63e294b4b4dd2d751e10a3b82a4922df97d95f8558b7c096ca010298900e6075'
+CSS_SHA256 = '9221d0b9649615378c1d4b2d12dacaaab20ae61fd0ab346bde4da6fcbdb9d82b'
 ICO = 'https://ico.org.uk/make-a-complaint/'
 GITHUB_PRIVACY = 'https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement'
 NOTICE_TAGS = {'html', 'body', 'main', 'div', 'article', 'h1', 'h2', 'p', 'ul',
@@ -49,6 +49,8 @@ def check(root):
     errors = discovery_errors(root)
     pages = {p: read_page(p) for p in site_files(root)}
     for p, parsed in pages.items():
+        if p.suffix.lower() != '.svg' and p != root / 'privacy.html' and any(n.tag == 'article' for n in parsed.nodes):
+            errors.append(f'{p.name}: privacy notice is forbidden outside privacy.html')
         if p != root / 'privacy.html':
             errors.extend(f'{p.relative_to(root)}: {e}' for e in parsed.errors)
     if (root / 'privacy').exists():
@@ -104,8 +106,8 @@ def check(root):
     footers = [n for n in page.nodes if n.tag == 'footer']
     skips = [n for n in page.nodes if n.tag == 'a' and n.attr.get('class') == 'skip'
              and n.attr.get('href') == '#main' and normalized(visible_text(n)) == 'Skip to content']
-    if len(headers) != 1 or normalized(visible_text(headers[0])) != 'How it worksAmiPilotContact Register interest':
-        errors.append('Privacy header visible text must match the approved v4 navigation')
+    if len(headers) != 1 or normalized(visible_text(headers[0])) != 'FeaturesHow it worksPilotAbout Register interest':
+        errors.append('Privacy header visible text must match the approved v5 navigation')
     brands = [n for n in page.nodes if n.tag == 'a' and n.attr.get('class') == 'brand'
               and any(h in n.ancestors() for h in headers)]
     expected_images = [
@@ -118,7 +120,15 @@ def check(root):
              for n in brands[0].children] != expected_images):
         errors.append('Privacy header brand must match the approved theme images and home link')
     errors.extend(footer_errors(page, 'privacy.html'))
-    permitted = {main, *headers, *footers, *skips}
+    # Exact mock footer navigation is outside the immutable Legal footer.
+    bands = [n for n in page.nodes if n.attr.get('class') == 'wrap footer-top']
+    expected_band = '<div class="wrap footer-top"><a class="brand" href="index.html" aria-label="CoAmi home"><img class="brand-light" src="img/coami-logo.svg" alt="CoAmi"><img class="brand-dark" src="img/coami-logo-light-on-dark.svg" alt="CoAmi"></a><nav aria-label="Footer"><a href="index.html">Home</a><a href="contact.html">Contact</a><a href="privacy.html" aria-current="page">Privacy</a></nav></div>'
+    # Strict tokens plus exact serialization prevent extra text/links in the band.
+    def markup(n):
+        return n.raw + ''.join(c if isinstance(c, str) else markup(c) for c in n.children) + '</' + n.tag + '>' if n.tag not in {'img', 'meta', 'link'} else n.raw
+    if len(bands) != 1 or markup(bands[0]) != expected_band:
+        errors.append('Privacy footer navigation must match the approved v5 markup')
+    permitted = {main, *headers, *footers, *skips, *bands}
 
     def outside(n):
         if n in permitted or hidden(n):

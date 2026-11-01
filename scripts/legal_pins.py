@@ -38,6 +38,8 @@ def pin_page(root, tag):
         return None
     if tag == 'article':
         fragment = '<main id="main"><div class="wrap">' + fragment + '</div></main>'
+    if tag == 'footer':
+        fragment = '<div class="footer-band">' + fragment + '</div>'
     page = Page('<!doctype html><html lang="en-GB"><head><meta charset="utf-8">'
                 '</head><body>' + fragment + '</body></html>')
     if page.errors or sum(n.tag == tag for n in page.nodes) != 1:

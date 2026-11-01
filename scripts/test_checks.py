@@ -22,14 +22,15 @@ import check_invariants as invariants
 import check_links as links
 import check_no_third_party as resources
 import check_privacy_text as privacy
+import check_v5 as v5
 import ci_checks
 import site_common as common
 import legal_visibility as visibility
 import allowlist
 
 SOURCE = Path(__file__).resolve().parents[1]
-ASSETS = ['index.html', 'privacy.html', '404.html', *allowlist.IMAGE_HASHES, 'style.css',
-          'CNAME', '.nojekyll', str(privacy.D26_PATH), *common.FONT_HASHES, *common.LEGAL_PINS]
+ASSETS = [*common.HTML_PAGES, *allowlist.IMAGE_HASHES, 'style.css',
+          'CNAME', '.nojekyll', str(privacy.D26_PATH), *common.FONT_HASHES, *common.LEGAL_PINS, 'legal/approved-features-copy.txt']
 
 
 class ChecksTest(unittest.TestCase):
@@ -53,6 +54,301 @@ class ChecksTest(unittest.TestCase):
 
     def error(self, checker, fragment):
         self.assertIn(fragment, '\n'.join(checker(self.root)))
+
+    def test_v5_footer_band(self):
+        self.edit('privacy.html', '>Contact<', '>Other<')
+        self.error(privacy.check, 'Privacy footer navigation must match the approved v5 markup')
+
+    def test_v5_feature_baseline(self):
+        self.assertEqual(v5.feature_errors(self.root), [])
+
+    def test_v5_feature_pin(self):
+        path = self.root / v5.FEATURES_PATH
+        original = path.read_bytes()
+        for replacement in [original + b' ', b'{}', None]:
+            if replacement is None:
+                path.unlink()
+            else:
+                path.write_bytes(replacement)
+            self.error(v5.feature_errors, 'Features approved-copy sha256 mismatch')
+            path.write_bytes(original)
+
+    def test_v5_feature_path_fixed(self):
+        self.assertEqual(v5.FEATURES_PATH.as_posix(), 'legal/approved-features-copy.txt')
+        (self.root / 'alternative.txt').write_bytes((self.root / v5.FEATURES_PATH).read_bytes())
+        (self.root / v5.FEATURES_PATH).unlink()
+        self.error(v5.feature_errors, 'Features approved-copy sha256 mismatch')
+        self.assertIn('/legal/', (SOURCE / '.github/CODEOWNERS').read_text())
+
+    def test_v5_feature_words(self):
+        original = (self.root / 'features.html').read_text()
+        data = json.loads((self.root / v5.FEATURES_PATH).read_text())
+        values = [data[k] for k in ('heading', 'subheading', 'disclaimer')]
+        values.extend(text for section in data['sections'] for item in section['items'] for text in item[:2])
+        for text in values:
+            with self.subTest(text=text):
+                # Short titles can also occur inside metadata/other words.
+                self.assertIn('>' + text + '<', original)
+                (self.root / 'features.html').write_text(original.replace(
+                    '>' + text + '<', '>' + text + ' Changed<', 1))
+                self.error(v5.feature_errors, 'Features complete visible copy/order differs')
+        (self.root / 'features.html').write_text(original)
+        self.body('<p>' + data['heading'] + '</p>', 'features.html')
+        self.error(v5.feature_errors, 'Features item must occur exactly once')
+
+    def test_v5_feature_status_association(self):
+        self.edit('features.html', 'Planned for the private pilot', 'Planned')
+        # Swap one other row to keep counts identical; association must fail.
+        self.edit('features.html', '<h3>Needs You</h3>', '<h3>Needs You</h3>')
+        path = self.root / 'features.html'
+        text = path.read_text()
+        index = text.index('<h3>Needs You</h3>')
+        path.write_text(text[:index] + text[index:].replace('>Planned</span>', '>Planned for the private pilot</span>', 1))
+        self.error(v5.feature_errors, 'Features title/sentence/status association differs')
+
+    def test_v5_feature_status_counts(self):
+        for label in ['Planned', 'Planned for the private pilot', 'In the private pilot']:
+            (self.root / 'features.html').write_bytes((SOURCE / 'features.html').read_bytes())
+            self.body('<p>' + label + '</p>', 'features.html')
+            self.error(v5.feature_errors, 'Features status counts must be 6 pilot, 30 Planned, 0 in pilot')
+
+    def test_v5_notice_only_privacy(self):
+        notice = (self.root / 'legal/approved-privacy-notice.html').read_text()
+        for name in common.HTML_PAGES:
+            if name == 'privacy.html':
+                continue
+            self.body(notice, name)
+            self.error(privacy.check, name + ': privacy notice is forbidden')
+            (self.root / name).write_bytes((SOURCE / name).read_bytes())
+
+    def test_v5_claim_baseline(self):
+        self.assertEqual(v5.claim_errors(self.root), [])
+
+    def test_r2_live_chat_pinned(self):
+        self.edit('features.html', 'Shared inbox and live chat', 'Shared inbox and LIVE CHAT')
+        self.assertEqual(v5.claim_errors(self.root), [])
+
+    def test_r2_live_chat_other_pages(self):
+        for name in common.HTML_PAGES:
+            if name == 'features.html':
+                continue
+            self.body('<p>Live chat</p>', name)
+            self.error(v5.claim_errors, name + ": banned claim word: 'Live'")
+
+    def test_r2_live_chat_outside_item(self):
+        self.body('<p>live chat</p>', 'features.html')
+        self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_go_live_in_item(self):
+        for title in ['go live', 'live chatter', 'live  chat', 'live-chat']:
+            (self.root / 'features.html').write_bytes((SOURCE / 'features.html').read_bytes())
+            self.edit('features.html', 'Shared inbox and live chat', 'Shared inbox and ' + title)
+            self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_live_chat_requires_pin(self):
+        self.edit('features.html', 'Shared inbox and live chat', 'Unapproved live chat')
+        self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_live_chat_pin_hash(self):
+        path = self.root / v5.FEATURES_PATH
+        path.write_bytes(path.read_bytes() + b' ')
+        self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_live_chat_hidden_and_attributes(self):
+        original = (SOURCE / 'features.html').read_text()
+        for replacement in ['<h3 title="live chat">Shared inbox and live chat</h3>',
+                            '<h3>Shared inbox and live chat<span hidden="hidden">live chat</span></h3>']:
+            (self.root / 'features.html').write_text(original.replace(
+                '<h3>Shared inbox and live chat</h3>', replacement))
+            self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_live_chat_legal_elements(self):
+        for tag, name in [('footer', 'index.html'), ('article', 'privacy.html')]:
+            path = self.root / name
+            original = path.read_text()
+            pin = self.root / v5.PINS[tag]
+            raw = pin.read_text()
+            for replacement in [raw.replace('Trett Labs Limited', 'Trett Labs Limited live chat', 1),
+                                raw.replace('<' + tag, '<' + tag + ' title="live chat"', 1)]:
+                pin.write_text(replacement)
+                path.write_text(original.replace(raw, replacement))
+                self.error(v5.claim_errors, name + ": banned claim word: 'live'")
+            pin.write_text(raw)
+            path.write_text(original)
+
+    def test_r2_purple_baseline(self):
+        self.assertEqual(v5.purple_errors(self.root), [])
+
+    def test_r2_purple_button(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for colour in [*v5.PURPLE_HEX, 'rgb(122 79 160 / 7%)', 'rgb(122 79 160 / 12%)',
+                       'rgba(122,79,160,.5)', '#7A4FA080', r'\23 7a4fa0']:
+            with self.subTest(colour=colour):
+                path.write_text(original + '\n.btn { color: ' + colour + '; }\n')
+                self.error(v5.purple_errors, 'purple outside .enso rule: .btn')
+
+    def test_r2_purple_inline_svg(self):
+        for attribute in ['fill', 'stroke']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body('<svg viewBox="0 0 24 24"><path ' + attribute + '="#7a4fa0" d="M0 0h1"/></svg>')
+            self.error(v5.purple_errors, 'index.html: purple in page attribute/inline CSS')
+
+    def test_r2_purple_html_attributes(self):
+        for attribute in ['color', 'bgcolor', 'style', 'data-colour']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body('<p ' + attribute + '="color: rgb(122 79 160)">word</p>')
+            self.error(v5.purple_errors, 'index.html: purple in page attribute/inline CSS')
+
+    def test_r2_purple_enso(self):
+        path = self.root / 'style.css'
+        with path.open('a') as stream:
+            stream.write('\n.enso, .enso .line, .enso > .dot { stroke: #7a4fa0; }\n'
+                         '@media (prefers-color-scheme: dark) { .enso { color: #c9a6ec; } }\n')
+        self.assertEqual(v5.purple_errors(self.root), [])
+
+    def test_r2_purple_selector_scope(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for selector in ['.enso, .btn', '.enso + .btn', '.enso ~ .btn', '.enso-line',
+                         ':root', '.enso:hover', 'body .enso']:
+            path.write_text(original + '\n' + selector + ' { color: #7a4fa0; }\n')
+            self.error(v5.purple_errors, 'purple outside .enso rule: ' + selector)
+
+    def test_r2_purple_other_css(self):
+        (self.root / 'extra.css').write_text('.enso { color: #7a4fa0; }')
+        self.error(v5.purple_errors, 'extra.css: purple outside .enso rule')
+
+    def test_r2_purple_hue_guard(self):
+        for colour in ['#801ae6', 'rgb(128 26 230)', 'rgb(50% 10% 90%)',
+                       'hsl(260 50% 50%)', 'hsl(300 50% 50%)', 'hsl(270 50% 20%)',
+                       'hsl(270 50% 80%)', 'hsla(.75turn,50%,50%,.3)',
+                       'rebeccapurple', 'hwb(270 10% 10%)', 'color(srgb .5 .1 .9)']:
+            with self.subTest(colour=colour):
+                self.assertTrue(list(v5.purple_colours(colour)))
+        for colour in ['hsl(259 50% 50%)', 'hsl(301 50% 50%)', 'hsl(270 25% 50%)',
+                       'hsl(270 50% 19%)', 'hsl(270 50% 81%)', '#241c2c', '#ffffff']:
+            with self.subTest(colour=colour):
+                self.assertEqual(list(v5.purple_colours(colour)), [])
+
+    def test_r2_purple_palette_identity(self):
+        # The icon's pale purple is outside the hue guard's lightness range.
+        self.assertTrue(list(v5.purple_colours('rgb(226 207 243 / 1%)')))
+
+    def test_r2_purple_parse_fail_closed(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for extra in ['.btn { color: #7a4fa0;', '.btn { color: color(display-p3 .5 .1 .9); }',
+                      '.btn { color: oklch(50% .2 290); }', '.btn { color: rgb(calc(100 + 22) 79 160); }']:
+            path.write_text(original + '\n' + extra)
+            self.error(v5.purple_errors, 'Purple: CSS/colour parse failed')
+
+    def test_r2_purple_rule_preludes(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for extra in ['@supports (color: #7a4fa0) { .btn { color: black; } }',
+                      '.btn[data-colour="#7a4fa0"] { color: black; }']:
+            path.write_text(original + '\n' + extra)
+            self.error(v5.purple_errors, 'purple in CSS rule/at-rule prelude')
+
+    def test_r2_purple_wiring(self):
+        with patch.object(v5, 'purple_errors', return_value=['purple sentinel']):
+            self.error(v5.check, 'purple sentinel')
+
+    def test_v5_claims_every_page(self):
+        for name in common.HTML_PAGES:
+            for word in ['LIVE', 'secure', 'Checked', 'working preview', 'available now', 'guaranteed']:
+                self.body('<p>' + word + '</p>', name)
+                self.assertIn(name + ': banned claim word: ' + repr(word), v5.claim_errors(self.root))
+                (self.root / name).write_bytes((SOURCE / name).read_bytes())
+
+    def test_v5_claims_all_copy(self):
+        for fragment in ['<p>se<span>cure</span></p>', '<svg aria-hidden="true"><text>secure</text></svg>',
+                         '<p aria-label="checked">word</p>', '<p hidden="hidden">guaranteed</p>']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body(fragment)
+            self.assertTrue(any(e.startswith('index.html: banned claim word:') for e in v5.claim_errors(self.root)))
+        (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+        self.edit('index.html', '</title>', ' available now</title>')
+        self.error(v5.claim_errors, "index.html: banned claim word: 'available now'")
+
+    def test_v5_claim_word_boundaries(self):
+        self.body('<p>lively unchecked securely guaranteedly</p>')
+        self.assertEqual(v5.claim_errors(self.root), [])
+
+    def test_v5_claim_pin_exception(self):
+        for tag, name in [('footer', 'index.html'), ('article', 'privacy.html')]:
+            original = (self.root / name).read_text()
+            pin = self.root / v5.PINS[tag]
+            raw = pin.read_text()
+            replacement = raw.replace('Trett Labs Limited', 'Trett Labs Limited guaranteed', 1)
+            pin.write_text(replacement)
+            (self.root / name).write_text(original.replace(raw, replacement))
+            self.assertFalse(any(e.startswith(name + ': banned claim word:') for e in v5.claim_errors(self.root)))
+            self.body('<p>live</p>', name)
+            self.error(v5.claim_errors, name + ": banned claim word: 'live'")
+            (self.root / name).write_text(original)
+            pin.write_text(raw)
+
+    def test_v5_motion_baseline(self):
+        self.assertEqual(v5.motion_errors(self.root), [])
+
+    def test_v5_motion_remove_reduce(self):
+        path = self.root / 'style.css'
+        path.write_text(path.read_text().split('@media (prefers-reduced-motion: reduce)')[0])
+        self.error(v5.motion_errors, 'needs reduced-motion')
+
+    def test_v5_motion_new_keyframe(self):
+        path = self.root / 'style.css'
+        path.write_text(path.read_text() + '@keyframes probe { from { opacity: 0; } to { opacity: 1; } }')
+        self.error(v5.motion_errors, 'keyframes without a covered animated selector: probe')
+
+    def test_v5_motion_new_selector(self):
+        path = self.root / 'style.css'
+        path.write_text(path.read_text() + '@keyframes probe { from { opacity: 0; } to { opacity: 1; } } .probe { animation: probe 1s; }')
+        self.error(v5.motion_errors, '.probe needs reduced-motion animation: none')
+
+    def test_v5_motion_important(self):
+        path = self.root / 'style.css'
+        path.write_text('@keyframes probe { from { opacity: 0; } to { opacity: 1; } } .probe { animation: probe 1s !important; }' + path.read_text())
+        self.error(v5.motion_errors, '.probe needs reduced-motion animation: none')
+
+    def test_v5_motion_transition(self):
+        self.edit('style.css', 'transition: none !important;', 'color: inherit;')
+        self.error(v5.motion_errors, '.btn needs reduced-motion transition: none')
+
+    def test_v5_motion_wrong_condition(self):
+        self.edit('style.css', '@media (prefers-reduced-motion: reduce)', '@media (max-width: 1px)')
+        self.error(v5.motion_errors, 'needs reduced-motion')
+
+    def test_v5_motion_parse_fail_closed(self):
+        path = self.root / 'style.css'
+        for suffix in ['.probe {', '}', '.probe { animation }', '@unknown thing {}']:
+            path.write_bytes((SOURCE / 'style.css').read_bytes() + suffix.encode())
+            self.error(v5.motion_errors, 'Motion: CSS parse failed')
+
+    def test_v5_motion_infinite(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        path.write_text('.hero-copy { animation-iteration-count: infinite; }' + original)
+        self.error(v5.motion_errors, 'infinite animation exceeds an icon: .hero-copy')
+
+    def test_v5_new_pages_fail_closed(self):
+        for name in common.HTML_PAGES:
+            original = (self.root / name).read_bytes()
+            (self.root / name).unlink()
+            self.error(resources.check, 'Missing document: ' + name)
+            (self.root / name).write_bytes(original)
+        (self.root / 'unlisted.html').write_bytes((SOURCE / 'about.html').read_bytes())
+        self.error(resources.check, 'Unexpected document:')
+
+    def test_v5_ci_wiring(self):
+        commands = ci_checks.commands('invariants', SOURCE, self.root)
+        self.assertEqual([Path(c[3]).name for c in commands], ['check_invariants.py', 'check_v5.py'])
+        html = ci_checks.commands('html', SOURCE, self.root)[0]
+        self.assertEqual({p for p in html if p.endswith('.html')}, {'./' + n for n in common.HTML_PAGES})
+        self.assertEqual(set(json.loads((SOURCE / '.pa11yci.json').read_text())['urls']),
+                         {'http://127.0.0.1:8080/' + n for n in common.HTML_PAGES})
 
     def test_logo_image_hashes(self):
         for name in allowlist.IMAGE_HASHES:
@@ -84,7 +380,7 @@ class ChecksTest(unittest.TestCase):
         self.error(resources.check, 'Approved ICO must start with ICO signature: favicon.ico')
 
     def test_favicon_links_exact(self):
-        for name in ['index.html', 'privacy.html', '404.html']:
+        for name in common.HTML_PAGES:
             original = (self.root / name).read_text()
             block = '\n'.join(allowlist.ICON_LINKS)
             self.assertIn(block, original)
@@ -110,7 +406,7 @@ class ChecksTest(unittest.TestCase):
             (self.root / name).write_text(original)
 
     def test_favicon_links_head(self):
-        for name in ['index.html', 'privacy.html', '404.html']:
+        for name in common.HTML_PAGES:
             original = (self.root / name).read_text()
             for icon in allowlist.ICON_LINKS:
                 with self.subTest(page=name, icon=icon):
@@ -232,7 +528,7 @@ class ChecksTest(unittest.TestCase):
         for url in ['https://evil.test/font.woff2', '//evil.test/font.woff2',
                     '/elsewhere.woff2', 'fonts/extra.woff2', 'data:font/woff2;base64,d09GMg==']:
             (self.root / 'style.css').write_bytes((SOURCE / 'style.css').read_bytes())
-            self.edit('style.css', 'url(fonts/urbanist-latin-var.woff2)', 'url(' + url + ')')
+            self.edit('style.css', 'url("fonts/urbanist-latin-var.woff2")', 'url(' + url + ')')
             self.error(resources.check, 'forbidden CSS resource vector')
 
     def test_v4_font_face_cardinality(self):
@@ -257,7 +553,7 @@ class ChecksTest(unittest.TestCase):
                 self.error(checker, 'match its approved pin byte for byte')
 
     def test_v4_footer_svg(self):
-        for name in ['index.html', 'privacy.html', '404.html']:
+        for name in common.HTML_PAGES:
             for opening, closing in [('<svg><defs><text>', '</text></defs></svg>'),
                                      ('<svg><title>', '</title></svg>'),
                                      ('<svg><desc>', '</desc></svg>')]:
@@ -484,7 +780,7 @@ class ChecksTest(unittest.TestCase):
 
     def test_r6_immutable_subset_status(self):
         # Report the supplied conflict, never silently exempt it or alter HTML.
-        for name in ['privacy.html', '404.html']:
+        for name in [n for n in common.HTML_PAGES if n != 'index.html']:
             self.assertEqual(common.read_page(SOURCE / name).errors, [])
         self.assertEqual(common.read_page(SOURCE / 'index.html').errors, [])
 
@@ -664,13 +960,14 @@ class ChecksTest(unittest.TestCase):
 
     def test_r5_allowlist_derivation(self):
         actual = {}
-        for name in ['index.html', 'privacy.html', '404.html']:
+        for name in common.HTML_PAGES:
             for node in common.read_page(SOURCE / name).nodes:
                 if not any(n.tag == 'svg' for n in node.ancestors()):
                     actual.setdefault(node.tag, set()).update(node.attr)
         # Optional dimensions are approved for images, although the header is
         # sized by CSS height and its intrinsic SVG aspect ratio.
         actual['img'].update({'width', 'height'})
+        actual['h2'].add('class')  # retained v4 vocabulary
         self.assertEqual(actual, allowlist.HTML_ATTRIBUTES)
         # r4's permitted SVG elements remain available with no new attributes.
         for tag in allowlist.SVG_ELEMENTS:
@@ -763,7 +1060,7 @@ class ChecksTest(unittest.TestCase):
             for kind in ['html', 'a11y', 'links', 'no-third-party', 'authors', 'privacy-text', 'invariants']:
                 with patch.object(sys, 'argv', ['ci_checks.py', '--root', str(self.root), '--', kind]):
                     self.assertEqual(ci_checks.main(), 0, kind)
-            self.assertEqual(run.call_count, 7)
+            self.assertEqual(run.call_count, 8)
 
     def test_r5_unknown_github_file(self):
         shutil.copytree(SOURCE, self.root, dirs_exist_ok=True)
@@ -847,9 +1144,8 @@ class ChecksTest(unittest.TestCase):
     def test_discovery_nul_and_prefix(self):
         result = self.cli('site_common.py')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, b'./404.html\0./coami-icon.svg\0'
-                         b'./img/coami-logo-light-on-dark.svg\0./img/coami-logo.svg\0'
-                         b'./index.html\0./privacy.html\0')
+        self.assertEqual(result.stdout, b''.join(('./' + name).encode() + b'\0'
+                         for name in sorted(common.EXPECTED_DOCUMENTS)))
 
     def test_svg_is_checked(self):
         self.edit('coami-icon.svg', '</svg>', '<script/></svg>')
@@ -1045,7 +1341,7 @@ class ChecksTest(unittest.TestCase):
                 self.error(resources.check, 'forbidden CSS resource vector in attribute')
 
     def test_r4_duplicate_attributes(self):
-        for name in ['index.html', 'privacy.html', '404.html']:
+        for name in common.HTML_PAGES:
             for old, new in [
                     ('http-equiv="Content-Security-Policy"',
                      'http-equiv="content-type" HTTP-EQUIV="Content-Security-Policy"'),
@@ -1081,14 +1377,14 @@ class ChecksTest(unittest.TestCase):
         run.assert_not_called()
 
     def test_r4_privacy_visibility(self):
-        for old in ['<main id="main"', '<body', '<article class="legal text"', '<p class="meta"']:
+        for old in ['<main id="main" tabindex="-1"', '<body', '<article class="legal text"', '<p class="meta"']:
             for attr in ['popover', 'hidden', 'inert', 'aria-hidden="false"', 'style=""']:
                 (self.root / 'privacy.html').write_text((SOURCE / 'privacy.html').read_text())
                 self.edit('privacy.html', old + '>', old + ' ' + attr + '>')
                 self.error(privacy.check, 'Privacy notice visibility')
 
     def test_r4_footer_visibility(self):
-        for name in ['index.html', 'privacy.html', '404.html']:
+        for name in common.HTML_PAGES:
             for old in ['<footer class="site"', '<body', '<html lang="en-GB"']:
                 for attr in ['popover', 'hidden', 'inert', 'aria-hidden="false"', 'style=""']:
                     (self.root / name).write_text((SOURCE / name).read_text())
@@ -1106,7 +1402,7 @@ class ChecksTest(unittest.TestCase):
             visibility.visibility_errors(page, 'index.html', footer, 'Legal footer')))
 
     def test_r4_class_placement(self):
-        for old, new in [('<main id="main">', '<main id="main" class="meta">'),
+        for old, new in [('<main id="main" tabindex="-1">', '<main id="main" class="meta">'),
                          ('<body>', '<body class="wrap">'),
                          ('<p class="meta">', '<p class="plain">'),
                          ('<article class="legal text">', '<article class="meta">'),
@@ -1116,7 +1412,7 @@ class ChecksTest(unittest.TestCase):
             self.error(privacy.check, 'Privacy notice visibility class placement')
 
     def test_r4_class_pins_match_approved_pages(self):
-        for name in ['index.html', 'privacy.html', '404.html']:
+        for name in common.HTML_PAGES:
             page = common.Page((SOURCE / name).read_text())
             protected = [n for n in page.nodes if n.tag == 'footer' or
                          (name == 'privacy.html' and n.tag == 'main')]
@@ -1198,14 +1494,14 @@ class ChecksTest(unittest.TestCase):
         self.error(links.check, 'mailto needs an address')
 
     def test_privacy_hidden_notice(self):
-        for old, new in [('<main id="main">', '<main id="main" hidden>'),
+        for old, new in [('<main id="main" tabindex="-1">', '<main id="main" hidden>'),
                          ('<body>', '<body aria-hidden="true">'),
                          ('<article class="legal text">', '<article class="legal text" inert>'),
-                         ('<main id="main">', '<main id="main" style="display:none">'),
+                         ('<main id="main" tabindex="-1">', '<main id="main" style="display:none">'),
                          ('<article class="legal text">', '<article class="legal text invisible">'),
-                         ('<main id="main">', '<template><main id="main">'),
-                         ('<main id="main">', '<details><main id="main">'),
-                         ('<main id="main">', '<noscript><main id="main">')]:
+                         ('<main id="main" tabindex="-1">', '<template><main id="main" tabindex="-1">'),
+                         ('<main id="main" tabindex="-1">', '<details><main id="main" tabindex="-1">'),
+                         ('<main id="main" tabindex="-1">', '<noscript><main id="main" tabindex="-1">')]:
             (self.root / 'privacy.html').write_text((SOURCE / 'privacy.html').read_text())
             self.edit('privacy.html', old, new)
             self.error(privacy.check, 'Privacy notice visibility')
@@ -1231,7 +1527,7 @@ class ChecksTest(unittest.TestCase):
         self.error(privacy.check, 'Extra visible text')
 
     def test_privacy_header(self):
-        self.edit('privacy.html', '>Contact<', '>Other<')
+        self.edit('privacy.html', '>About<', '>Other<')
         self.error(privacy.check, 'Privacy header visible text')
 
     def test_ico_href(self):
@@ -1248,7 +1544,7 @@ class ChecksTest(unittest.TestCase):
         self.error(resources.check, 'Unexpected document')
 
     def test_privacy_main_structure(self):
-        for old, new in [('<main id="main">', '<section id="main">'),
+        for old, new in [('<main id="main" tabindex="-1">', '<section id="main">'),
                          ('</main>', ''), ('</main>', '</main><main></main>')]:
             (self.root / 'privacy.html').write_text((SOURCE / 'privacy.html').read_text())
             self.edit('privacy.html', old, new)
@@ -1276,14 +1572,14 @@ class ChecksTest(unittest.TestCase):
         self.error(invariants.check, '.nojekyll must exist and be empty')
 
     def test_legal_footer_every_page(self):
-        for name in ['index.html', 'privacy.html', '404.html']:
+        for name in common.HTML_PAGES:
             p = self.root / name
             before, footer = p.read_text().split('<footer', 1)
             p.write_text(before + '<footer' + footer.replace('17310137', '00000000'))
             self.error(invariants.check, name + ': Legal footer text')
 
     def test_footer_links(self):
-        self.edit('404.html', 'href="privacy.html"', 'href="/index.html"')
+        self.edit('404.html', '· <a href="privacy.html"', '· <a href="/index.html"')
         self.error(invariants.check, 'Legal footer links must be exact')
 
     def test_banned_copy(self):
