@@ -34,7 +34,8 @@ import hero_contrast as hero
 SOURCE = Path(__file__).resolve().parents[1]
 ASSETS = [*common.HTML_PAGES, *allowlist.IMAGE_HASHES, 'style.css',
           'CNAME', '.nojekyll', str(privacy.D26_PATH), *common.FONT_HASHES, *common.LEGAL_PINS, 'legal/approved-features-copy.txt',
-          *('legal/page-pins/' + name + '.txt' for name in common.HTML_PAGES)]
+          *('legal/page-pins/' + name + suffix for name in common.HTML_PAGES
+            for suffix in ('.txt', '.head.txt'))]
 
 
 class ChecksTest(unittest.TestCase):
@@ -58,6 +59,164 @@ class ChecksTest(unittest.TestCase):
 
     def error(self, checker, fragment):
         self.assertIn(fragment, '\n'.join(checker(self.root)))
+
+    def head_edit(self, name, field, value):
+        path = self.root / name
+        original = (SOURCE / name).read_text()
+        page = common.read_page(SOURCE / name)
+        node = next(n for n in page_pins.head_nodes(page) if
+                    (n.tag == 'title' if field == 'title' else
+                     n.tag == 'meta' and n.attr.get('name') == 'description'))
+        replacement = ('<title>' + value + '</title>' if field == 'title' else
+                       '<meta name="description" content="' + value + '">')
+        # title.raw is only the start tag; take its complete text-only element.
+        old = ('<title>' + page_pins.head_record(page)['title'] + '</title>'
+               if field == 'title' else node.raw)
+        path.write_text(original.replace(old, replacement, 1))
+
+    def test_r7_head_baseline(self):
+        self.assertEqual(page_pins.page_pin_errors(self.root), [])
+        self.assertEqual(set(page_pins.HEAD_SHA256), set(common.HTML_PAGES))
+        for name in common.HTML_PAGES:
+            page = common.read_page(self.root / name)
+            self.assertEqual(page_pins.head_errors(page), [])
+            self.assertEqual(page_pins.head_bytes(page),
+                             (self.root / 'legal/page-pins' / (name + '.head.txt')).read_bytes())
+
+    def test_r7_title_every_page(self):
+        for name in common.HTML_PAGES:
+            for value in ('Every feature is in the private pilot', 'Different neutral title'):
+                with self.subTest(page=name, value=value):
+                    self.head_edit(name, 'title', value)
+                    self.error(page_pins.page_pin_errors, name + ': public head text differs')
+
+    def test_r7_description_every_page(self):
+        for name in common.HTML_PAGES:
+            for value in ('Every feature is in the private pilot', 'Different neutral description'):
+                with self.subTest(page=name, value=value):
+                    self.head_edit(name, 'description', value)
+                    self.error(page_pins.page_pin_errors, name + ': public head text differs')
+
+    def test_r7_head_cardinality(self):
+        # Test the structural guard independently of the exact-text pin.
+        for name in common.HTML_PAGES:
+            source = (SOURCE / name).read_text()
+            for field in ('title', 'description'):
+                page = common.read_page(SOURCE / name)
+                node = next(n for n in page_pins.head_nodes(page) if
+                            (n.tag == 'title' if field == 'title' else
+                             n.tag == 'meta' and n.attr.get('name') == 'description'))
+                element = ('<title>' + page_pins.head_record(page)['title'] + '</title>'
+                           if field == 'title' else node.raw)
+                for replacement in ('', element + element):
+                    page = common.Page(source.replace(element, replacement, 1))
+                    self.assertIn('head requires exactly one ' + field, page_pins.head_errors(page))
+                    (self.root / name).write_text(source.replace(element, replacement, 1))
+                    self.error(page_pins.page_pin_errors, name + ': head requires exactly one ' + field)
+            (self.root / name).write_text(source)
+
+    def test_r7_empty_head(self):
+        for name in common.HTML_PAGES:
+            for field in ('title', 'description'):
+                for value in ('', '   '):
+                    self.head_edit(name, field, value)
+                    self.assertIn('head ' + field + ' must be non-empty',
+                                  page_pins.head_errors(common.read_page(self.root / name)))
+
+    def test_r7_head_meta_allowlist(self):
+        for name in common.HTML_PAGES:
+            for meta in ('<meta name="keywords" content="All features in the private pilot">',
+                         '<meta name="og:title" content="Other title">',
+                         '<meta property="og:description" content="Other description">',
+                         '<meta name="twitter:description" content="Other description">',
+                         '<meta name="robots" content="noindex">',
+                         '<meta name="viewport" content="width=device-width, initial-scale=1">'):
+                (self.root / name).write_text((SOURCE / name).read_text().replace('</head>', meta + '</head>'))
+                self.error(page_pins.page_pin_errors, name + ': head elements/attributes differ from allowlist')
+            (self.root / name).write_text((SOURCE / name).read_text())
+
+    def test_r7_head_link_allowlist(self):
+        for name in common.HTML_PAGES:
+            self.edit(name, '</head>', '<link rel="canonical" href="index.html"></head>')
+            self.error(page_pins.page_pin_errors, name + ': head elements/attributes differ from allowlist')
+
+    def test_r7_head_pin_integrity(self):
+        for name in common.HTML_PAGES:
+            path = self.root / 'legal/page-pins' / (name + '.head.txt')
+            original = path.read_bytes()
+            for data in (original + b'\n', b'{}\n', None):
+                if data is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(data)
+                self.error(page_pins.page_pin_errors, name + ': head pin sha256 mismatch or missing')
+                path.write_bytes(original)
+
+    def test_r7_head_banned_words(self):
+        # Check the scanner directly, independently of pin comparisons.
+        for name in common.HTML_PAGES:
+            for field in ('title', 'description'):
+                for value in ('MFA', '2FA', 'Certified secure GDPR compliant', '100 users'):
+                    self.head_edit(name, field, value)
+                    self.error(invariants.check, name + ': banned public metadata/attribute copy')
+            (self.root / name).write_text((SOURCE / name).read_text())
+
+    def test_r7_head_availability_title(self):
+        for name in common.HTML_PAGES:
+            for value in ('available now', 'working preview', 'live chat', 'guaranteed'):
+                self.head_edit(name, 'title', value)
+                self.error(v5.claim_errors, name + ': banned claim word')
+            (self.root / name).write_text((SOURCE / name).read_text())
+
+    def test_r7_head_availability_description(self):
+        for name in common.HTML_PAGES:
+            for value in ('available now', 'working preview', 'live chat', 'guaranteed'):
+                self.head_edit(name, 'description', value)
+                self.error(v5.claim_errors, name + ': banned claim word')
+            (self.root / name).write_text((SOURCE / name).read_text())
+
+    def test_r7_head_joined_ban(self):
+        # Invalid inline title markup must also yield the scanner's own ban,
+        # rather than relying on tokenizer or pin rejection to hide a gap.
+        self.head_edit('index.html', 'title', 'M<span>FA</span>')
+        self.error(invariants.check, 'index.html: banned public metadata/attribute copy')
+
+    def test_r7_head_separated_ban(self):
+        self.head_edit('index.html', 'title', '<span>100</span><span>users</span>')
+        self.error(invariants.check, 'index.html: banned public metadata/attribute copy')
+
+    def test_r7_head_separated_availability(self):
+        self.head_edit('index.html', 'title', '<span>available</span><span>now</span>')
+        self.error(v5.claim_errors, "index.html: banned claim word: 'available now'")
+
+    def test_r7_head_joined_availability(self):
+        self.head_edit('index.html', 'title', 'se<span>cure</span>')
+        self.error(v5.claim_errors, "index.html: banned claim word: 'secure'")
+
+    def test_r7_head_live_chat_scope(self):
+        self.assertEqual(v5.claim_errors(self.root), [])
+        for field in ('title', 'description'):
+            self.head_edit('features.html', field, 'live chat')
+            self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r7_head_generator(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR', tempfile.gettempdir())) as temp:
+            result = subprocess.run([sys.executable, '-I', '-B', str(SOURCE / 'scripts/generate_page_pins.py'),
+                                     '--source', str(self.root), '--destination', temp],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(len(list(Path(temp).iterdir())), 16)
+            for pin in (self.root / 'legal/page-pins').iterdir():
+                self.assertTrue((Path(temp) / pin.name).is_file(), pin.name)
+                self.assertEqual(pin.read_bytes(), (Path(temp) / pin.name).read_bytes())
+            path = self.root / 'index.html'
+            page = common.read_page(path)
+            path.write_text(path.read_text().replace('<title>' + page_pins.head_record(page)['title'] + '</title>', ''))
+            result = subprocess.run([sys.executable, '-I', '-B', str(SOURCE / 'scripts/generate_page_pins.py'),
+                                     '--source', str(self.root), '--destination', temp],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('head requires exactly one title', result.stderr)
 
     def test_r6_contrast_baseline(self):
         self.assertEqual(hero.hero_contrast_errors(self.root), [])

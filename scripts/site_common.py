@@ -466,6 +466,11 @@ def separated_text(node, extract=None):
     return ' ' + value + ' '
 
 
+def joined_text(node):
+    """Retain inline-joined metadata scanning alongside separated words."""
+    return ''.join(c if isinstance(c, str) else joined_text(c) for c in node.children)
+
+
 def copy_text(node, boundaries=True):
     # aria-hidden affects accessibility, not visual rendering. SVG text counts.
     if node.tag in {'head', 'template'} or 'hidden' in node.attr:

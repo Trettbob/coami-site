@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from site_common import ROOT, discovery_errors, normalized, read_page, site_files, visible_text, copy_text
+from site_common import ROOT, discovery_errors, normalized, read_page, site_files, visible_text, copy_text, separated_text, joined_text
 from legal_visibility import visibility_errors
 from legal_pins import pin_errors, pin_page
 
@@ -56,7 +56,7 @@ def check(root):
         public_copy = []
         for node in page.nodes:
             if node.tag == 'title':
-                public_copy.append(''.join(c for c in node.children if isinstance(c, str)))
+                public_copy.extend([separated_text(node), joined_text(node)])
             if node.tag == 'meta':
                 key = (node.attr.get('name') or '').lower()
                 prop = (node.attr.get('property') or '').lower()

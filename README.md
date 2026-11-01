@@ -397,3 +397,67 @@ browser validation. Links, no-third-party, privacy-text and invariants pass.
 Authors passes against an automatically removed synthetic noreply-only history
 under `$TMPDIR`; publication history is unavailable. No network, installs or
 workspace Git writes were used; temporary repos/caches/copies are deleted.
+
+
+Round 7 pins the public head without changing any page, CSS, original Legal
+file or existing body pin. Each `legal/page-pins/<page>.head.txt` is one UTF-8
+JSON record containing the exact decoded title and description, followed by a
+newline. `scripts/page_pins.py` authenticates every head pin with a fixed
+SHA256 mapping and compares its canonical bytes with the parsed page. Missing,
+duplicate or empty/whitespace-only titles and descriptions fail independently
+of text equality. The exact current head element/attribute sequence is an
+allowlist: charset, viewport, CSP, referrer, title, description, three icon links
+and stylesheet. Additions, omissions, changed attributes and unlisted meta/link
+elements fail. No Open Graph or Twitter metadata currently exists; adding it
+requires explicit trusted review rather than silently adding public text.
+
+The explicit generator now emits both body and head pins and prints both digest
+maps. It rejects invalid heads and remains absent from CI. Regeneration from
+`in/base` preserved all eight body pins byte-for-byte. New head pin SHA256 values:
+
+| File under `legal/page-pins/` | SHA256 |
+| --- | --- |
+| `404.html.head.txt` | `ff8947135db27de76b348baddc7e778867043c14e6218e3bebebb0c72aa81094` |
+| `about.html.head.txt` | `657e106bc70d5717c54cdf8b13d1536f3e60c9f2ba2a971ae29bd73509c236b6` |
+| `contact.html.head.txt` | `2f88d8dcaa88b8de4164ed91034f7c2b5bd47cb5e83854817d947c84143817b0` |
+| `features.html.head.txt` | `ac852ae8bf62d906bd643d9319fc1010900f83c45a0c4cf83992220e8af9b2c9` |
+| `how-it-works.html.head.txt` | `af08387396c1d5d66f80c5177004c3c96316f449b07a47286308d663956bb362` |
+| `index.html.head.txt` | `e989c9ffbb9080985c693a46d1c59952a0e2125ff05b3f5a29af9abbdbfcd754` |
+| `pilot.html.head.txt` | `b93366777c9267da7f403ba48d426fdc19a2270bb911d7ea4916e0ceb9d681c7` |
+| `privacy.html.head.txt` | `6faf0bded997aec90381c23f89494859c5ba595eaa03c6120e211dde39d55579` |
+
+Both the banned-word scanner and availability-claim scanner check title text
+and description content independently of the pins. Titles now receive both
+separated and inline-joined banned-word scans; descriptions are plain attribute
+text, checked as a complete string. The availability scanner already scans the
+whole head in both text modes and all metadata attributes; direct regressions
+now lock this down. The live-chat exception remains confined to position-matched,
+complete pinned Features body items. Neither title nor description qualifies,
+including on Features. The reported “Every feature is in the private pilot”
+phrase fails the exact pin check in either field on every page, even though
+that phrase contains none of the existing claim-ban words.
+
+Round 7 verification: **283 passing tests**, retaining all 266 prior methods
+and adding 17; **249/249 mutants caught**, retaining all 227 prior IDs and
+adding M228–M249. Each mutation needs a passing focused baseline, and only an
+assertion failure counts as a catch. Coverage includes title/description changes
+on all eight pages, missing/duplicate/empty fields, head pin integrity, unlisted
+meta/link elements (including social metadata), direct word and availability
+scans, joined-word scans, live-chat scope and reproducible generation.
+
+The Low finding at `scripts/hero_contrast.py:75` remains a known issue: selector
+spelling can miss a hero colour override. That file and the audit override are
+unchanged; the mandatory stylesheet SHA256 gate still rejects such CSS edits.
+
+Current artifacts are `../test.txt`, `../tree-run.txt` and
+`../DIFF-r6-to-r7.patch` (`diff -ru ./in/base ./out` from the job folder).
+All seven CI entries are attempted on the complete tree. Package commands force
+`--offline --no-install` using an empty temporary npm cache; html-validate@9.0.0
+and pa11y-ci@4.0.0 fail with ENOTCACHED. The a11y entry also cannot bind localhost
+in this sandbox; its separate dependency probe mocks only server startup and
+readiness, uses the real audit copy/config, and confirms ENOTCACHED. Links,
+no-third-party, privacy-text and invariants pass. Authors passes against a full
+candidate copy with synthetic noreply-only history in a temporary repository
+under `$TMPDIR`; publication history is unavailable. Temporary repos, copies
+and caches are deleted. No network, installs or workspace Git writes were used.
+Package/browser checks and hosted CI/protection settings remain unverified.

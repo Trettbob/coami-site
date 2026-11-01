@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from site_common import HTML_PAGES, read_page
-from page_pins import skeleton_bytes
+from page_pins import skeleton_bytes, head_bytes, head_errors
 
 
 def main():
@@ -21,15 +21,17 @@ def main():
     pins = {}
     for name in HTML_PAGES:
         page = read_page(args.source / name)
-        if page.errors:
-            parser.error(f'{name}: {page.errors}')
-        pins[name] = skeleton_bytes(page)
+        if page.errors or head_errors(page):
+            parser.error(f'{name}: {page.errors + head_errors(page)}')
+        pins[name] = (skeleton_bytes(page), head_bytes(page))
     args.destination.mkdir(parents=True, exist_ok=True)
-    print('PAGE_SHA256 = {')
-    for name, data in pins.items():
-        (args.destination / (name + '.txt')).write_bytes(data)
-        print(f'    {name!r}: {hashlib.sha256(data).hexdigest()!r},')
-    print('}')
+    for index, (mapping, suffix) in enumerate((('PAGE_SHA256', '.txt'),
+                                               ('HEAD_SHA256', '.head.txt'))):
+        print(mapping + ' = {')
+        for name, data in pins.items():
+            (args.destination / (name + suffix)).write_bytes(data[index])
+            print(f'    {name!r}: {hashlib.sha256(data[index]).hexdigest()!r},')
+        print('}')
 
 
 if __name__ == '__main__':

@@ -244,10 +244,40 @@ the negative decorative layer as hiding content.
 | M226 contrast CI wiring | `scripts/check_v5.py` | `test_r6_contrast_wiring` |
 | M227 monotone gradient proof | `scripts/hero_contrast.py` | `test_r6_nonmonotone_glow` |
 
-Expected caught/total: **227/227**. Actual execution is saved in `../test.txt`.
+| M228 head pin hash | `scripts/page_pins.py` | `test_r7_head_pin_integrity` |
+| M229 head pin comparison | `scripts/page_pins.py` | `test_r7_title_every_page` |
+| M230 unique head title | `scripts/page_pins.py` | `test_r7_head_cardinality` |
+| M231 unique head description | `scripts/page_pins.py` | `test_r7_head_cardinality` |
+| M232 nonempty head title | `scripts/page_pins.py` | `test_r7_empty_head` |
+| M233 nonempty head description | `scripts/page_pins.py` | `test_r7_empty_head` |
+| M234 head meta allowlist | `scripts/page_pins.py` | `test_r7_head_meta_allowlist` |
+| M235 head link allowlist | `scripts/page_pins.py` | `test_r7_head_link_allowlist` |
+| M236 head enforcement wiring | `scripts/page_pins.py` | `test_r7_description_every_page` |
+| M237 title pin value | `scripts/page_pins.py` | `test_r7_head_baseline` |
+| M238 description pin value | `scripts/page_pins.py` | `test_r7_head_baseline` |
+| M239 metadata joined-word ban | `scripts/check_invariants.py` | `test_r7_head_joined_ban` |
+| M240 availability title scan | `scripts/check_v5.py` | `test_r7_head_availability_title` |
+| M241 availability description scan | `scripts/check_v5.py` | `test_r7_head_availability_description` |
+| M242 joined head availability scan | `scripts/check_v5.py` | `test_r7_head_joined_availability` |
+| M243 live chat forbidden in head | `scripts/check_v5.py` | `test_r7_head_live_chat_scope` |
+| M244 head pin generation | `scripts/generate_page_pins.py` | `test_r7_head_generator` |
+| M245 banned description scan | `scripts/check_invariants.py` | `test_r7_head_banned_words` |
+| M246 banned title scan | `scripts/check_invariants.py` | `test_r7_head_banned_words` |
+
+| M247 separated head banned-word scan | `scripts/check_invariants.py` | `test_r7_head_separated_ban` |
+| M248 separated head availability scan | `scripts/check_v5.py` | `test_r7_head_separated_availability` |
+| M249 head generator fails closed | `scripts/generate_page_pins.py` | `test_r7_head_generator` |
+
+Expected caught/total: **249/249**. Actual execution is saved in `../test.txt`.
 
 M207–M227 cover the temporary audit copy, its exact stylesheet override and
 candidate preservation, peak-alpha compositing, both theme thresholds, normal
 text and button states, the non-text outline, closed colour parsing, token
 scope/completeness, the decorative-layer and paint contracts, sRGB maths,
 monotone gradient bounds and CI enforcement.
+
+
+M228–M249 cover head pin integrity and exact values, unique and non-empty
+titles/descriptions, the fixed meta/link allowlist, per-page enforcement,
+metadata generation, both claim scanners and their joined-text scans, and the
+restriction of live chat to approved Features body items.
