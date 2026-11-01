@@ -58,6 +58,43 @@ class ChecksTest(unittest.TestCase):
     def error(self, checker, fragment):
         self.assertIn(fragment, '\n'.join(checker(self.root)))
 
+    def test_r5_gradient_backgrounds_decorative(self):
+        # Parse every stylesheet, including nested rules and background-image
+        # longhands. No content-bearing element may own the hero gradient.
+        gradients = []
+        for path in common.site_files(self.root, '.css'):
+            rules, _ = v5.css_rules(path.read_text())
+            for selectors, declarations, context in rules:
+                for prop, value in declarations:
+                    if prop in {'background', 'background-image'} and 'gradient(' in value.lower():
+                        gradients.append((path.relative_to(self.root).as_posix(),
+                                          selectors, prop, value, context))
+        self.assertEqual(gradients, [('style.css', ('.hero::before',), 'background',
+                         'radial-gradient(ellipse 75% 65% at 50% 47%, var(--glow), transparent)', ())])
+
+    def test_r5_hero_glow_stacking(self):
+        rules, _ = v5.css_rules((self.root / 'style.css').read_text())
+        hero = [dict(d) for s, d, c in rules if s == ('.hero',) and not c]
+        self.assertEqual(len(hero), 1)
+        self.assertEqual(hero[0].get('position'), 'relative')
+        self.assertEqual(hero[0].get('isolation'), 'isolate')
+        self.assertFalse({'background', 'background-image'} & hero[0].keys())
+        before = [dict(d) for s, d, c in rules if s == ('.hero::before',) and not c]
+        self.assertEqual(before, [{
+            'content': '""', 'position': 'absolute', 'inset': '0', 'z-index': '-1',
+            'background': 'radial-gradient(ellipse 75% 65% at 50% 47%, var(--glow), transparent)',
+            'pointer-events': 'none'}])
+
+    def test_r5_hero_glow_visibility(self):
+        # A negative decorative layer does not hide text; keep all existing
+        # conservative selector/ancestor audits active for actual hiding rules.
+        rules, _ = v5.css_rules((self.root / 'style.css').read_text())
+        before = [d for s, d, c in rules if s == ('.hero::before',) and not c]
+        self.assertEqual(len(before), 1)
+        self.assertEqual(page_visibility.hiding_reasons(before[0]), [])
+        self.assertEqual(page_visibility.page_visibility_errors(self.root), [])
+        self.css_probe('.hero-description { opacity: 0; }')
+
     def test_r4_landmark_names(self):
         # Different IDREFs can resolve to the same accessible name.
         for name in common.HTML_PAGES:

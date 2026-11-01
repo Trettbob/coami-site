@@ -58,7 +58,7 @@ regenerated JSON with the round-1 pin after only those same normalisations gives
 identical data. The pin retains all three sections and 36 item triples.
 
 Features pin SHA256: `1e70dd45e954473a3c81eb6d982757cecd2f402b0bbe906d2ac2aa03f2eaf83e`.
-CSS visibility pin SHA256: `9221d0b9649615378c1d4b2d12dacaaab20ae61fd0ab346bde4da6fcbdb9d82b`.
+CSS visibility pin SHA256: `ecb176cbd33db5b40a53008ece251bbb0ce452d9d8256a5ef33e20e0822c269a`.
 The copy check enforces the full visible sequence, exact slots, whole-page
 occurrence counts, per-row associations and status counts: 6
 `Planned for the private pilot`, 30 `Planned`, 0 `In the private pilot`.
@@ -244,11 +244,11 @@ RGB (242.55, 242.8, 243.35); dark `rgb(150 158 170 / 8%)` gives
 (30.4, 29.2, 33.84). All ratios exceed even the 4.5:1 normal-text requirement.
 These are settled colour calculations, not a browser/axe reproduction.
 
-`arrive` starts the hero at opacity 0, and `enter-view` starts Features reveal
-items at opacity 0. The latter follows scroll position, so waiting 600ms alone
-cannot settle a partially entered item. This explains how intermediate states
-can generate the reported contrast errors despite passing settled colours.
-The generated pa11y config now adds Chromium's
+Round 4 added reduced motion to settle `arrive` and the scroll-driven
+`enter-view` animation during audits. The subsequent browser/axe finding for
+this round identifies the four home hero errors as incomplete background
+resolution caused by the hero's own gradient, not animation or failed contrast.
+The generated pa11y config continues to add Chromium's
 `--force-prefers-reduced-motion` launch argument, activating the existing
 reduced-motion CSS (no animation, full opacity) before measurement. It retains
 all trusted defaults: WCAG2AA, axe, autocomplete-valid, avoid-inline-spacing,
@@ -257,7 +257,7 @@ html-validate@9.0.0 and pa11y-ci@4.0.0 pins remain unchanged. Candidate configs
 are still ignored; generated config/logs stay outside the served tree and are
 removed automatically. No contrast rule is ignored or relaxed.
 
-Verification: 249 passing tests (all 247 prior methods plus two regressions);
+Round 4 verification: 249 passing tests (all 247 prior methods plus two regressions);
 202/202 mutants caught (all 200 prior IDs plus M201 and M202). The new tests
 first failed on the unmodified behaviour. Each mutant catch requires an
 assertion failure, never a syntax, import or runtime error. `MUTANTS.md` maps
@@ -278,3 +278,52 @@ under $TMPDIR, not the unavailable publication history. Package validation,
 browser confirmation of the contrast fix and hosted settings remain unverified.
 Detailed commands, actual results, contrast calculations and preservation
 checks are recorded in tree-run.txt.
+
+
+Round 5 moves the home glow from `.hero` to its empty decorative `::before`.
+The exact radial-gradient arguments and both `--glow` theme values are retained.
+The hero is positioned relatively and isolated; the absolute pseudo-element
+uses `inset: 0`, `z-index: -1` and `pointer-events: none`. It occupies the same
+padding box as the original background, adds no layout dimensions or overflow,
+and paints below the hero copy, actions and enso inside the isolated stack.
+No rule or page depends on the hero owning a background. The text and ring
+retain their existing styles and stacking above the decoration.
+
+All eight pages and all stylesheets/SVGs were inspected: this is the only
+background gradient or glow-token use. Other surfaces use solid paper/card/
+primary/neutral fills or box shadows; the ring uses fills/strokes. They require
+no changes. These are static CSS/markup findings; browser rendering and axe
+confirmation remain unavailable offline. The reported browser finding is
+supplied with the task, not independently reproduced here.
+
+Only `style.css` changes the rendered site. Its new SHA256 is
+`ecb176cbd33db5b40a53008ece251bbb0ce452d9d8256a5ef33e20e0822c269a`,
+re-pinned in `scripts/check_privacy_text.py` and above. All HTML, page-pin files,
+page-pin hashes, Legal bytes, colours, typography, spacing, breakpoints and
+animation rules remain byte-identical to this round's input. The pa11y `wait`
+and generated `--force-prefers-reduced-motion` argument are retained, with no
+rule disabled or relaxed. The existing visibility audit already permits a
+negative decorative z-index; no checker exemption or weakening is needed.
+
+Round 5 verification: 252 passing tests (all 249 prior methods plus three
+regressions); 206/206 mutants caught (all 202 prior IDs plus M203–M206). The new
+regressions first failed before the CSS fix. Parsed CSS checks confine every
+background/background-image gradient to the decorative pseudo-element, retain
+the exact gradient, and require its bounded, isolated stacking and pointer
+behaviour. Visibility checks accept that decoration while still rejecting
+hidden hero text. M203 restores the content-bearing gradient, M204 removes
+isolation, M205 raises the glow to the content layer and M206 incorrectly marks
+the decorative negative layer as hiding. Assertion failures alone count as
+mutant catches. No network, installs or workspace Git writes are used.
+
+Current artifacts: `../test.txt`, `../tree-run.txt` and
+`../DIFF-r4-to-r5.patch`. The tree run attempts all seven CI entries using the
+complete `out` tree. Package invocations use `--offline --no-install` and a
+temporary npm cache; html-validate and pa11y-ci are unavailable (ENOTCACHED).
+Links, no-third-party, privacy-text and invariants pass. The a11y entry stops
+because localhost binding raises `PermissionError`; a separate dependency probe
+stubs only server startup/readiness and invokes the real generated pa11y config,
+returning ENOTCACHED. Author checking passes using only a synthetic noreply
+history in an automatically deleted `$TMPDIR` repository. Commands and actual
+entry results are recorded in `tree-run.txt`; publication history, hosted checks
+and visual/browser confirmation are not verified by this offline run.

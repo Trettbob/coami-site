@@ -311,6 +311,17 @@ MUTANTS = [
     ('M202 audit reduced motion', 'ci_checks.py',
      ".append('--force-prefers-reduced-motion')", '.extend([])',
      'test_r4_a11y_reduced_motion_config'),
+    ('M203 gradient on content-bearing hero', '../style.css',
+     '.hero::before { content:', '.hero { content:',
+     'test_r5_gradient_backgrounds_decorative'),
+    ('M204 hero stacking isolation', '../style.css',
+     'isolation: isolate; ', '', 'test_r5_hero_glow_stacking'),
+    ('M205 glow behind hero content', '../style.css',
+     'z-index: -1;', 'z-index: 0;', 'test_r5_hero_glow_stacking'),
+    ('M206 decorative negative layer is not hiding', 'page_visibility.py',
+     'return sorted(set(reasons))',
+     "if any(v.startswith('-') for v in values.get('z-index', [])):\n        reasons.append('negative z-index')\n    return sorted(set(reasons))",
+     'test_r5_hero_glow_visibility'),
 ]
 
 

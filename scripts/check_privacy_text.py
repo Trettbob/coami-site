@@ -16,7 +16,7 @@ D26_SHA256 = '6842c06ee3bd94f90a16f4fe5b040b1454716e3a54f103cf2474a9075adc8852'
 D26_PATH = Path('legal/D26-website-privacy-notice.md')
 # A conservative visibility proof: approve CSS changes explicitly, rather than
 # pretending that an offline HTML parser implements the browser CSS cascade.
-CSS_SHA256 = '9221d0b9649615378c1d4b2d12dacaaab20ae61fd0ab346bde4da6fcbdb9d82b'
+CSS_SHA256 = 'ecb176cbd33db5b40a53008ece251bbb0ce452d9d8256a5ef33e20e0822c269a'
 ICO = 'https://ico.org.uk/make-a-complaint/'
 GITHUB_PRIVACY = 'https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement'
 NOTICE_TAGS = {'html', 'body', 'main', 'div', 'article', 'h1', 'h2', 'p', 'ul',

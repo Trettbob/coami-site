@@ -10,6 +10,9 @@ visibility, integration, and preservation of the original joined-word ban.
 M115 removes the shared aria-hidden copy guard for both text scans.
 M201 restores the closing section's duplicate resolved name; M202 removes
 reduced motion from the emitted accessibility config.
+M203 moves the glow back onto a content-bearing hero; M204 removes its stacking
+isolation; M205 brings the glow up to the content layer; M206 incorrectly treats
+the negative decorative layer as hiding content.
 
 | Mutant / check removed | File | Required regression |
 | --- | --- | --- |
@@ -215,5 +218,9 @@ reduced motion from the emitted accessibility config.
 | M200 retain original joined-word ban | `scripts/check_invariants.py` | `test_r3_original_ban_split_words` |
 | M201 duplicate resolved landmark name | `index.html` | `test_r4_landmark_names` |
 | M202 audit reduced motion | `scripts/ci_checks.py` | `test_r4_a11y_reduced_motion_config` |
+| M203 gradient on content-bearing hero | `style.css` | `test_r5_gradient_backgrounds_decorative` |
+| M204 hero stacking isolation | `style.css` | `test_r5_hero_glow_stacking` |
+| M205 glow behind hero content | `style.css` | `test_r5_hero_glow_stacking` |
+| M206 decorative negative layer is not hiding | `scripts/page_visibility.py` | `test_r5_hero_glow_visibility` |
 
-Expected caught/total: **202/202**. Actual execution is saved in `../test.txt`.
+Expected caught/total: **206/206**. Actual execution is saved in `../test.txt`.
