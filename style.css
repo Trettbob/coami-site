@@ -1,134 +1,100 @@
-:root {
-  color-scheme: light dark;
-  --background: #f8faf9;
-  --text: #182c28;
-  --muted: #455e58;
-  --accent: #12634e;
-  --border: #bdcec7;
-  --focus: #865100;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  line-height: 1.65;
-}
+/* CoAmi website mock v4 (UX, 1 Nov 2026): warm and friendly, CoAmi purple prominent,
+   still calm Scandi/Japanese. Own font, self-hosted: Urbanist (variable 100–900, SIL OFL 1.1) for headings and text. Nothing third-party, no JS. */
+@font-face{font-family:"Urbanist";src:url(fonts/urbanist-latin-var.woff2) format("woff2");font-weight:100 900;font-display:swap}
+:root{
+  --bg:#fbf8f4;--card:#ffffff;--fg:#241d2b;--muted:#5d5563;--line:#ece4ee;
+  --brand:#aa79bf;--ink:#785297;--wash:#f3ecf7;--mark:#e3cdef;--dot:#291f33;
+  --btn:#785297;--btn-fg:#ffffff;--glow:rgba(170,121,191,.36);--shadow:0 1px 2px rgba(41,31,51,.05),0 8px 24px rgba(41,31,51,.06);
+  --serif:"Urbanist",ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,Arial,sans-serif;
+  --sans:"Urbanist",ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,Arial,sans-serif;
+  color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#141216;--card:#1d1a22;--fg:#efeaf2;--muted:#b0a7b6;--line:#2e2834;
+  --ink:#c7a6d9;--wash:#241d2b;--mark:#4a3558;--btn:#aa79bf;--btn-fg:#141216;--glow:rgba(170,121,191,.22);
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25)}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-padding-top:96px}
+body{margin:0;background:var(--bg);color:var(--fg);font:450 1.0625rem/1.7 var(--sans)}
+a{color:inherit;text-decoration-color:var(--brand);text-decoration-thickness:1px;text-underline-offset:.25em}
+a:hover{color:var(--ink)}
+a:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:6px}
+.skip{position:absolute;left:-999px;top:12px;background:var(--card);padding:8px 12px;z-index:3}
+.skip:focus{left:20px}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+.col{max-width:640px}
+h1,h2,.legal h1{font-family:"Urbanist",ui-sans-serif,-apple-system,system-ui,"Segoe UI",Helvetica,Arial,sans-serif;font-weight:650;letter-spacing:-.02em}
 
-* {
-  box-sizing: border-box;
-}
+/* Header: full-width sticky bar, logo left, links and button right */
+header.site{position:sticky;top:0;z-index:2;background:color-mix(in srgb,var(--bg) 88%,transparent);border-bottom:1px solid var(--line)}
+.bar{max-width:1040px;margin:0 auto;display:flex;align-items:center;gap:8px;padding:10px 20px;min-height:72px}
+.brand{display:inline-flex;align-items:center;min-height:44px;margin-right:auto;text-decoration:none;font:600 1.625rem/1 var(--sans);letter-spacing:0;color:var(--fg)}
+.brand:hover{color:var(--fg)}
+.brand img{display:block;height:48px;width:auto;margin-left:calc(-0.215 * 48px)}
+.brand .brand-dark{display:none}
+@media (prefers-color-scheme:dark){.brand .brand-light{display:none}.brand .brand-dark{display:block}}
+header nav{display:flex;gap:2px}
+header nav a{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;border-radius:10px;color:var(--muted);text-decoration:none;font-size:.9375rem}
+header nav a:hover{color:var(--fg);background:var(--wash)}
 
-body {
-  max-width: 46rem;
-  margin: 0 auto;
-  padding: 0 1.25rem;
-  background: var(--background);
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
+/* Buttons: one filled, one outlined */
+.btn{display:inline-flex;align-items:center;min-height:48px;padding:0 22px;border-radius:999px;background:var(--btn);color:var(--btn-fg);border:1.5px solid var(--btn);font-weight:600;text-decoration:none}
+.btn:hover{color:var(--btn-fg);filter:brightness(1.08)}
+.btn.line{background:transparent;color:var(--ink);border-color:var(--brand)}
+.btn.line:hover{color:var(--ink);background:var(--wash);filter:none}
+.btn.sm{min-height:44px;padding:0 18px;font-size:.9375rem;margin-left:8px}
 
-.site-header {
-  padding: 3rem 0 2rem;
-  border-bottom: 1px solid var(--border);
-}
+/* Hero: text left, the CoAmi ring and dot right in a soft purple light */
+.hero{padding:96px 0 104px}
+.hero .wrap{display:grid;grid-template-columns:1fr 300px;gap:48px;align-items:center}
+.hero .lead{grid-column:1;grid-row:1}
+.enso{grid-column:2;grid-row:1;width:300px;height:300px;justify-self:end}
+.enso .halo{fill:var(--glow)}
+.enso .ring{fill:none;stroke:var(--brand);stroke-width:2}
+.enso .seed{fill:var(--ink)}
+.hero h1{font-size:clamp(2.25rem,5.4vw,3.5rem);line-height:1.1;margin:0 0 24px;max-width:15ch}
+.hero p{font-size:clamp(1.0625rem,2vw,1.2rem);color:var(--muted);margin:0 0 36px;max-width:38ch}
+.actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
 
-.wordmark {
-  display: inline-block;
-  margin: 0 0 1rem;
-  color: var(--accent);
-  font-size: 1.25rem;
-  font-weight: 750;
-  letter-spacing: 0.02em;
-}
+/* Sections */
+section{padding:88px 0}
+.label{display:inline-block;font-size:.8125rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);background:var(--wash);border-radius:999px;padding:4px 12px;margin:0 0 18px}
+h2{font-size:clamp(1.75rem,3.4vw,2.25rem);line-height:1.2;margin:0 0 22px}
+p{margin:0 0 16px}
+.muted{color:var(--muted)}
+.steps{list-style:none;margin:40px 0 0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+.steps li{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:var(--shadow)}
+.steps .n{display:inline-grid;place-items:center;width:36px;height:36px;border-radius:50%;background:var(--wash);color:var(--ink);font-weight:600;font-size:.875rem;margin-bottom:16px}
+.steps h3{font-size:1.0625rem;font-weight:600;margin:0 0 6px}
+.steps p{color:var(--muted);font-size:.9875rem;line-height:1.6;margin:0}
+.panel{background:var(--wash);border-radius:28px;padding:56px}
+.note{max-width:620px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:32px;box-shadow:var(--shadow);font-size:.98rem}
+.note h2{font-size:clamp(1.5rem,3vw,1.9rem)}
+.cta{margin:24px 0 0;display:flex;flex-wrap:wrap;gap:12px}
+ul.plain{list-style:none;padding:0;margin:18px 0 22px}
+ul.plain li{padding:12px 16px;margin:0 0 8px;background:var(--card);border:1px solid var(--line);border-radius:14px}
+.wrap.col{max-width:1040px}
+.wrap.col>*{max-width:640px}
 
-h1, h2 {
-  line-height: 1.25;
-  text-wrap: balance;
-}
+/* Footer */
+footer.site{margin-top:40px;border-top:1px solid var(--line);padding:40px 0 64px;font-size:.875rem;line-height:1.7;color:var(--muted)}
+footer.site p{max-width:700px;margin:0}
 
-h1 {
-  max-width: 25ch;
-  margin: 0;
-  font-size: clamp(1.75rem, 5vw, 2.75rem);
-  font-weight: 650;
-}
+/* Privacy and 404 */
+.legal{padding:72px 0 104px}
+.wrap.legal{padding:72px 20px 104px}
+.legal h1{font-size:clamp(2rem,4.4vw,2.75rem);line-height:1.15;margin:0 0 10px}
+.legal h2{font-size:1.4rem;margin:48px 0 12px}
+.legal .meta{color:var(--muted);margin:0 0 36px;font-size:.9375rem}
+.legal ul.plain li{background:none;border:0;border-radius:0;padding:4px 0 4px 1.1em;margin:0;position:relative}
+.legal ul.plain li::before{content:"";position:absolute;left:0;top:.85em;width:6px;height:6px;border-radius:50%;background:var(--brand)}
 
-h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1.25rem;
-}
-
-main {
-  padding: 2rem 0;
-}
-
-section + section {
-  margin-top: 2rem;
-}
-
-p {
-  margin: 0 0 0.75rem;
-}
-
-ul {
-  margin: 0;
-  padding-left: 1.25rem;
-}
-
-li + li {
-  margin-top: 0.5rem;
-}
-
-a {
-  color: var(--accent);
-  text-underline-offset: 0.2em;
-  text-decoration-thickness: 0.1em;
-}
-
-a:hover {
-  text-decoration-thickness: 0.18em;
-}
-
-a:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 4px;
-  border-radius: 2px;
-}
-
-.draft-note, .site-footer {
-  color: var(--muted);
-}
-
-.site-footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 2rem;
-  justify-content: space-between;
-  padding: 1.25rem 0 2rem;
-  border-top: 1px solid var(--border);
-  font-size: 0.9375rem;
-}
-
-.site-footer p {
-  margin: 0;
-}
-
-.skip-link {
-  position: absolute;
-  top: 0.75rem;
-  left: 1.25rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--background);
-  transform: translateY(-200%);
-}
-
-.skip-link:focus {
-  transform: translateY(0);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #111d19;
-    --text: #edf4f0;
-    --muted: #b2c8bd;
-    --accent: #8bdfbd;
-    --border: #4c6558;
-    --focus: #ffd38a;
-  }
+@media (max-width:900px){.steps{grid-template-columns:1fr 1fr}header nav{display:none}.hero .wrap{grid-template-columns:1fr}.enso{display:none}}
+@media (max-width:560px){
+  .steps{grid-template-columns:1fr}
+  .hero{padding:72px 0 72px}
+  section{padding:64px 0}
+  .panel{padding:14px;border-radius:22px}
+  .note{padding:24px 20px}
+  .bar{padding:8px 16px;min-height:64px}
+  .btn.sm{padding:0 14px;font-size:.875rem}
 }

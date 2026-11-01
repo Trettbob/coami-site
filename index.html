@@ -1,54 +1,86 @@
 <!doctype html>
 <html lang="en-GB">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
-  <meta name="referrer" content="no-referrer">
-  <title>CoAmi: plan and build software with Ami</title>
-  <meta name="description" content="CoAmi helps you plan and build a software project with Ami, an AI assistant. Now in a private, invitation-only pilot.">
-  <link rel="stylesheet" href="style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>CoAmi: plan and build software with Ami</title>
+<meta name="description" content="We're building CoAmi, where you plan and build a software project with Ami, an AI assistant. A private, invitation-only pilot is coming soon.">
+<link rel="icon" href="favicon.ico" sizes="48x48">
+<link rel="icon" href="coami-icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header">
-    <p class="wordmark">CoAmi</p>
-    <h1>Plan and build software with Ami, an AI assistant, one approved step at a time.</h1>
-  </header>
-  <main id="main">
-    <section aria-labelledby="what-heading">
-      <h2 id="what-heading">What CoAmi is</h2>
-      <p>CoAmi is a place to plan and build a software project. You describe what you want in plain English. Ami, CoAmi&rsquo;s AI assistant, asks questions until the plan is clear and writes it up as a Blueprint: what the project will do, and what it won&rsquo;t.</p>
-      <p>Nothing is built until you approve the Blueprint. CoAmi then builds the project in steps and keeps the code in a repository for that project. You can open a preview, try it, and send feedback for the next step.</p>
-      <p>Ami is an AI and can make mistakes. You stay in charge: you approve the plan, and you decide what happens next. CoAmi is made by Trett Labs in the UK.</p>
-    </section>
-    <section aria-labelledby="pilot-heading">
-      <h2 id="pilot-heading">Private pilot</h2>
-      <p>CoAmi is in a private pilot. From November 2026 we&rsquo;re inviting one to three workspaces to try it.</p>
-      <p>It&rsquo;s by invitation only. There&rsquo;s no public sign-up, and the pilot is free.</p>
-    </section>
-    <section aria-labelledby="email-heading">
-      <h2 id="email-heading">Email we send</h2>
-      <p>We only send email that&rsquo;s needed to use CoAmi. The website doesn&rsquo;t subscribe you to anything.</p>
-      <ul>
-        <li>Invitations go only to people invited by a workspace owner and individually approved by a Trett Labs director.</li>
-        <li>We send sign-in, account and security notices. Essential notices cannot be switched off.</li>
-        <li>You can switch off optional notifications about your own projects.</li>
-        <li>We send no marketing and use no bought lists.</li>
-        <li>Service emails come from no-reply@coami.ai; contact us at privacy@coami.ai or security@coami.ai.</li>
-        <li>Amazon SES (eu-west-2) suppresses hard-bounced or complaining addresses to stop further sending. Entries contain the email address, reason and date. A director manually removes your entry when your data is deleted.</li>
-      </ul>
-      <p>Replies to <span class="email-address">no-reply@coami.ai</span> aren&rsquo;t read, so please use the addresses here instead.</p>
-      <p>If you got an email from us you didn&rsquo;t expect, you can ignore it, or tell us and we&rsquo;ll look into it.</p>
-    </section>
-    <section aria-labelledby="contact-heading">
-      <h2 id="contact-heading">Contact</h2>
-      <p>Questions about CoAmi or the pilot, or about an email you got from us? Email us at <a href="mailto:hello@coami.ai">hello@coami.ai</a>.</p>
-    </section>
-  </main>
-  <footer class="site-footer">
-    <p>CoAmi is operated by Trett Labs Limited, registered in England and Wales, company number 17310137. Registered office: The 1812 Building, Wheatley Park, Mirfield, West Yorkshire, WF14 8HE, United Kingdom. Contact: <a href="mailto:privacy@coami.ai">privacy@coami.ai</a>. Security reports: <a href="mailto:security@coami.ai">security@coami.ai</a>.</p>
-    <p><a href="privacy.html">Privacy Notice</a> &middot; <a href="index.html">Home</a></p>
-  </footer>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site"><div class="bar">
+<a class="brand" href="index.html" aria-label="CoAmi home"><img class="brand-light" src="img/coami-logo.svg" alt="CoAmi"><img class="brand-dark" src="img/coami-logo-light-on-dark.svg" alt="CoAmi"></a>
+<nav aria-label="Main"><a href="index.html#how">How it works</a><a href="index.html#ami">Ami</a><a href="index.html#pilot">Pilot</a><a href="index.html#contact">Contact</a></nav>
+<a class="btn sm" href="mailto:hello@coami.ai?subject=CoAmi%20pilot">Register interest</a>
+</div></header>
+<main id="main">
+<div class="hero"><div class="wrap">
+<svg class="enso" viewBox="0 0 240 240" aria-hidden="true" focusable="false"><circle class="halo" cx="120" cy="120" r="112"/><circle class="ring" cx="120" cy="120" r="92"/><circle class="seed" cx="166" cy="40" r="12"/></svg>
+<div class="lead">
+<h1>Plan and build software with Ami.</h1>
+<p>We're building CoAmi: a place to plan a software project with Ami, an AI assistant, and build it one approved step at a time.</p>
+<div class="actions"><a class="btn" href="mailto:hello@coami.ai?subject=CoAmi%20pilot">Register interest</a><a class="btn line" href="#pilot">About the private pilot</a></div>
+</div>
+</div></div>
+
+<section id="how" aria-labelledby="how-h"><div class="wrap">
+<p class="label">How it works</p>
+<h2 id="how-h" class="col">This is the journey we're building for the private pilot.</h2>
+<ol class="steps">
+<li><span class="n">01</span><h3>Describe it</h3><p>Tell Ami what you want to build, in plain English.</p></li>
+<li><span class="n">02</span><h3>Agree the plan</h3><p>Ami asks questions to make the plan clear, and writes it up as a Blueprint: what the project will do, and what it won't.</p></li>
+<li><span class="n">03</span><h3>Approve, then build</h3><p>Nothing is built until you approve the Blueprint. CoAmi then builds in steps and keeps the code in a repository for your project.</p></li>
+<li><span class="n">04</span><h3>Try it</h3><p>Open a preview, try it, and send feedback for the next step.</p></li>
+</ol>
+</div></section>
+
+<section id="ami" aria-labelledby="ami-h"><div class="wrap col">
+<p class="label">Ami</p>
+<h2 id="ami-h">Ami is an AI.</h2>
+<p>Ami is an AI assistant, not a person. It can make mistakes, so you check and approve each step.</p>
+<p>You stay in charge: you approve the plan, and you decide what happens next.</p>
+</div></section>
+
+<section id="pilot" aria-labelledby="pilot-h"><div class="wrap"><div class="panel"><div class="note">
+<p class="label">Private pilot</p>
+<h2 id="pilot-h">By invitation, in a private pilot coming soon.</h2>
+<p>CoAmi is getting ready for a private pilot. We plan to invite a small number of workspaces to try it.</p>
+<p>It's by invitation only, and free during the pilot. There's no public sign-up.</p>
+<p class="muted">If you'd like to take part, email us. We'll use your email only to reply to you about the pilot.</p>
+<p class="cta"><a class="btn" href="mailto:hello@coami.ai?subject=CoAmi%20pilot">Register interest</a><a class="btn line" href="privacy.html">Privacy notice</a></p>
+</div></div></div></section>
+
+<section aria-labelledby="email-h"><div class="wrap col">
+<p class="label">Email</p>
+<h2 id="email-h">Email we send</h2>
+<p>This site doesn't sign you up for email. Pilot service emails contain no promotion:</p>
+<ul class="plain">
+<li>Invitations, only to people a workspace owner has invited and a Trett Labs director has approved.</li>
+<li>Sign-in, account and security notices.</li>
+<li>Optional notifications about your own projects, which you can switch off.</li>
+</ul>
+<p class="muted">We send no marketing and use no bought lists. Service emails come from no-reply@coami.ai. The <a href="privacy.html">privacy notice</a> has the details.</p>
+</div></section>
+
+<section id="contact" aria-labelledby="contact-h"><div class="wrap col">
+<p class="label">Contact</p>
+<h2 id="contact-h">Made by Trett Labs Limited, a UK company.</h2>
+<ul class="plain">
+<li>Questions and the pilot: <a href="mailto:hello@coami.ai">hello@coami.ai</a></li>
+<li>Privacy requests: <a href="mailto:privacy@coami.ai">privacy@coami.ai</a></li>
+<li>Security reports: <a href="mailto:security@coami.ai">security@coami.ai</a></li>
+</ul>
+</div></section>
+
+</main>
+<footer class="site"><div class="wrap">
+<p>Trett Labs Limited. Registered in England and Wales, company number 17310137. Registered office: The 1812 Building, Wheatley Park, Mirfield, West Yorkshire, WF14 8HE. <a href="mailto:hello@coami.ai">hello@coami.ai</a> · ICO registration ZC276667 · <a href="privacy.html">Privacy</a></p>
+</div></footer>
 </body>
 </html>

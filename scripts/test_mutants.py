@@ -1,0 +1,278 @@
+"""Remove one guard per temporary copy; a named regression must fail.
+
+Offline, no Git, no installs. Fixtures and mutations are removed with $TMPDIR.
+Each focused baseline must pass before mutation. A kill requires an assertion
+failure (not a syntax/import/runtime error) in the designated regression.
+"""
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+
+SOURCE = Path(__file__).resolve().parents[1]
+# ID, script, exact edit, replacement, focused test (ChecksTest).
+MUTANTS = [
+    ('M01 DTD lexical guard', 'site_common.py',
+     "if any(not re.match(r'<!doctype", "if False and any(not re.match(r'<!doctype", 'test_r4_dtd_entities'),
+    ('M02 entity-reference guard', 'site_common.py',
+     'if not re.fullmatch(r\'&(?:amp', 'if False and not re.fullmatch(r\'&(?:amp', 'test_r4_entities_html_and_svg'),
+    ('M03 XML parser DTD refusal', 'site_common.py',
+     "raise ValueError('forbidden DTD/entity declaration')", 'pass', 'test_r4_xml_parser_refuses_dtd'),
+    ('M04 XML parser selection', 'site_common.py',
+     "page = SVGPage(text) if path.suffix.lower() == '.svg' else Page(text)", 'page = Page(text)', 'test_r4_svg_xml_well_formed'),
+    ('M05 XML root namespace', 'site_common.py',
+     "if element.tag != '{http://www.w3.org/2000/svg}svg':", "if False:", 'test_r4_svg_xml_allowlist'),
+    ('M06 XML element allowlist', 'site_common.py',
+     "if element.tag not in {'{http://www.w3.org/2000/svg}' + t for t in SVG_ELEMENTS}:", 'if False:', 'test_r4_svg_xml_allowlist'),
+    ('M07 XML attribute allowlist', 'site_common.py',
+     'if key not in SVG_ATTRIBUTES:', 'if False:', 'test_r4_svg_xml_allowlist'),
+    ('M08 inline SVG element allowlist', 'check_no_third_party.py',
+     'if tag not in {t.lower() for t in SVG_ELEMENTS}:', 'if False:', 'test_r4_inline_svg_allowlist'),
+    ('M09 inline SVG attribute allowlist', 'check_no_third_party.py',
+     'if key not in {a.lower() for a in SVG_ATTRIBUTES}:', 'if False:', 'test_r4_inline_svg_allowlist'),
+    ('M10 URL in arbitrary attribute', 'check_no_third_party.py',
+     "if re.search(r'url\\s*\\(', css_code(value), re.I):", 'if False:', 'test_r4_attribute_urls'),
+    ('M11 restrict navigation exception', 'check_no_third_party.py',
+     "navigation = not svg and tag == 'a' and key == 'href'", "navigation = key in {'href', 'xlink:href'}", 'test_r4_non_navigation_hrefs'),
+    ('M12 duplicate HTML attributes', 'site_common.py',
+     "if len(names) != len(set(names)):\n            self.errors.append(f'line", "if False:\n            self.errors.append(f'line", 'test_r4_duplicate_attributes'),
+    ('M13 inline validator directives', 'site_common.py',
+     "if any(word in compact for word in ('html-validate', 'eslint', 'pa11y', 'axe')):", 'if False:', 'test_r4_validator_directives'),
+    ('M14 CI preflight', 'ci_checks.py',
+     'if not errors:\n        for path in site_files(root):', 'if False:\n        for path in site_files(root):', 'test_r4_ci_markup_preflight'),
+    ('M15 Legal forbidden attributes', 'legal_visibility.py',
+     'if VISIBILITY_ATTRIBUTES.intersection(node.attr) or hidden(node):', 'if hidden(node):', 'test_r4_visibility_attributes_guard'),
+    ('M16 Legal class placement', 'legal_visibility.py',
+     "if tuple((node.attr.get('class') or '').split()) != pins.get(node_path(node), ()):", 'if False:', 'test_r4_class_placement'),
+    ('M17 privacy visibility wiring', 'check_privacy_text.py',
+     "errors.extend(visibility_errors(page, 'privacy.html', main, 'Privacy notice'))", 'pass', 'test_r4_privacy_visibility'),
+    ('M18 footer visibility wiring', 'check_invariants.py',
+     "errors = visibility_errors(page, name, footers[0], 'Legal footer')", 'errors = []', 'test_r4_footer_visibility'),
+    ('M19 D26 privacy statement destination', 'check_privacy_text.py',
+     "if len(github) != 1 or github[0].attr.get('href') != GITHUB_PRIVACY:", 'if False:', 'test_r4_github_privacy_href'),
+    ('M20 D26 ICO destination', 'check_privacy_text.py',
+     "if len(ico) != 1 or ico[0].attr.get('href') != ICO:", 'if False:', 'test_ico_href'),
+    ('M21 title copy', 'check_invariants.py',
+     "if node.tag == 'title':", 'if False:', 'test_r4_banned_metadata'),
+    ('M22 description copy', 'check_invariants.py',
+     "if key == 'description' or key.startswith", "if False or key.startswith", 'test_r4_banned_metadata'),
+    ('M23 og name copy', 'check_invariants.py',
+     "key.startswith(('og:', 'twitter:'))", "key.startswith(('twitter:',))", 'test_r4_banned_metadata'),
+    ('M24 twitter name copy', 'check_invariants.py',
+     "key.startswith(('og:', 'twitter:'))", "key.startswith(('og:',))", 'test_r4_banned_metadata'),
+    ('M25 og property copy', 'check_invariants.py',
+     "prop.startswith(('og:', 'twitter:'))", "prop.startswith(('twitter:',))", 'test_r4_banned_metadata'),
+    ('M26 twitter property copy', 'check_invariants.py',
+     "prop.startswith(('og:', 'twitter:'))", "prop.startswith(('og:',))", 'test_r4_banned_metadata'),
+    ('M27 alt copy', 'check_invariants.py',
+     "{'alt', 'title', 'aria-label'}", "{'title', 'aria-label'}", 'test_r4_banned_metadata'),
+    ('M28 title attribute copy', 'check_invariants.py',
+     "{'alt', 'title', 'aria-label'}", "{'alt', 'aria-label'}", 'test_r4_banned_metadata'),
+    ('M29 aria-label copy', 'check_invariants.py',
+     "{'alt', 'title', 'aria-label'}", "{'alt', 'title'}", 'test_r4_banned_metadata'),
+    ('M30 XML processing instructions', 'site_common.py',
+     "raise ValueError('forbidden XML processing instruction')", 'pass', 'test_svg_xml_vectors'),
+    ('M31 duplicate XML attributes ignoring case', 'site_common.py',
+     "if len(names) != len(set(names)):\n                self.errors.append('duplicate attribute name in SVG')",
+     "if False:\n                self.errors.append('duplicate attribute name in SVG')", 'test_r4_svg_duplicate_attribute_case'),
+    ('M32 resource checker markup errors', 'check_no_third_party.py',
+     "errors.extend(f'{name}: {e}' for e in page.errors)", 'pass', 'test_r4_markup_all_checkers'),
+    ('M33 link checker markup errors', 'check_links.py',
+     "errors.extend(f'{path.relative_to(root)}: {e}' for e in page.errors)", 'pass', 'test_r4_markup_all_checkers'),
+    ('M34 invariant checker markup errors', 'check_invariants.py',
+     "errors.extend(f'{name}: {e}' for e in page.errors)", 'pass', 'test_r4_markup_all_checkers'),
+    ('M35 privacy checker markup errors', 'check_privacy_text.py',
+     'errors.extend(page.errors)', 'pass', 'test_r4_markup_all_checkers'),
+
+    ('M36 exact CODEOWNERS discovery exception', 'site_common.py',
+     "name not in {'CNAME', '.nojekyll', '.github/CODEOWNERS'}",
+     "name not in {'CNAME', '.nojekyll'}", 'test_r6_codeowners_discovery'),
+    ('M37 exact .github file vocabulary', 'site_common.py',
+     "if p.relative_to(root).parts[0] == '.github' and name not in GITHUB_FILES:",
+     'if False:', 'test_r5_unknown_github_file'),
+    ('M38 markup element allowlist', 'allowlist.py',
+     'if node.tag not in table:', 'if False:', 'test_r5_unknown_element'),
+    ('M39 markup attribute allowlist', 'allowlist.py',
+     'if key not in table.get(node.tag, set()):', 'if False:', 'test_r5_unknown_attribute'),
+    ('M40 per-element attribute vocabulary', 'allowlist.py',
+     'if key not in table.get(node.tag, set()):',
+     'if key not in set().union(*table.values()):', 'test_r5_all_forbidden_attributes'),
+    ('M41 shared HTML vocabulary wiring', 'site_common.py',
+     'self.errors.extend(page_errors(self, document=False))', 'pass', 'test_r5_unknown_attribute'),
+    ('M42 closing-tag vocabulary wiring', 'site_common.py',
+     'self.errors.extend(vocabulary_errors(Node(tag, [], self.line), svg))',
+     'pass', 'test_r5_all_forbidden_elements'),
+    ('M43 shared XML per-element vocabulary', 'site_common.py',
+     'self.errors.extend(vocabulary_errors(node, svg=True))', 'pass', 'test_r5_svg_per_element_attributes'),
+    ('M44 exact document rules wiring', 'site_common.py',
+     'page.errors.extend(page_errors(page))', 'pass', 'test_r5_csp_keyword'),
+    ('M45 raw attribute byte comparison', 'allowlist.py',
+     'and values == [expected]', '', 'test_r5_raw_attribute_bytes'),
+    ('M46 exact html language', 'allowlist.py',
+     "if len(htmls) != 1 or not exact(htmls[0], 'lang', 'en-GB'):",
+     'if False:', 'test_r5_html_lang'),
+    ('M47 exact CSP keyword', 'allowlist.py',
+     "if not exact(node, 'http-equiv', 'Content-Security-Policy'):",
+     'if False:', 'test_r5_csp_keyword'),
+    ('M48 exact CSP content in shared checks', 'allowlist.py',
+     "if not exact(node, 'content', CSP):", 'if False:', 'test_r5_csp_content_shared'),
+    ('M49 CSP cardinality in shared checks', 'allowlist.py',
+     'if len(policies) != 1:', 'if False:', 'test_r5_csp_count_shared'),
+    ('M50 exact referrer value', 'allowlist.py',
+     "if not exact(node, 'name', 'referrer') or not exact(node, 'content', 'no-referrer'):",
+     'if False:', 'test_r5_referrer_value'),
+    ('M51 referrer cardinality', 'allowlist.py',
+     'if len(referrers) != 1:', 'if False:', 'test_r5_referrer_count'),
+    ('M52 exact link rel vocabulary', 'allowlist.py',
+     "else:\n                errors.append('Markup allowlist: link rel must be byte-exact stylesheet or icon or apple-touch-icon')",
+     "elif False:\n                errors.append('Markup allowlist: link rel must be byte-exact stylesheet or icon or apple-touch-icon')",
+     'test_r5_link_rel'),
+    ('M53 exact stylesheet target', 'allowlist.py',
+     "if not exact(node, 'href', STYLESHEET):", 'if False:', 'test_r5_stylesheet_target'),
+    ('M54 stylesheet cardinality on index', 'allowlist.py',
+     'if len(stylesheets) != 1:', 'if False:', 'test_r5_extra_stylesheet_index'),
+    ('M55 stylesheet cardinality on 404', 'allowlist.py',
+     'if len(stylesheets) != 1:', 'if False:', 'test_r5_extra_stylesheet_404'),
+    ('M56 stylesheet required', 'allowlist.py',
+     'if len(stylesheets) != 1:', 'if False:', 'test_r5_stylesheet_missing'),
+    ('M57 exact favicon target', 'allowlist.py',
+     "if not any(exact(node, 'href', name) for name in IMAGE_HASHES):", 'if False:', 'test_r5_icon_target'),
+    ('M58 privacy check covers every document', 'check_privacy_text.py',
+     "errors.extend(f'{p.relative_to(root)}: {e}' for e in parsed.errors)",
+     'pass', 'test_r5_extra_stylesheet_index'),
+    ('M59 body background rejected by attribute vocabulary', 'allowlist.py',
+     'if key not in table.get(node.tag, set()):', 'if False:', 'test_r5_body_background'),
+    ('M60 table background rejected by vocabulary', 'allowlist.py',
+     'if node.tag not in table:', 'if False:', 'test_r5_table_background'),
+    ('M61 initial exact doctype / BOM', 'site_common.py', "self.fail('doctype must be exactly <!doctype html> at byte 0 (no BOM)')", 'pass', 'test_r6_doctype_byte_zero'),
+    ('M62 all other declarations / comments', 'site_common.py', "self.fail('only the initial doctype declaration is allowed; comments/marked sections forbidden')", 'pass', 'test_r6_declarations'),
+    ('M63 processing instructions', 'site_common.py', "self.fail('processing instructions forbidden')", 'pass', 'test_r6_processing_instructions'),
+    ('M64 control character range', 'site_common.py', "self.fail('NUL/control characters forbidden (except layout TAB/LF/CR)')", 'pass', 'test_r6_controls'),
+    ('M65 literal HTML reference set', 'site_common.py', 'if match[0] not in HTML_REFERENCES:', 'if False:', 'test_r6_references'),
+    ('M66 nonvoid HTML slash', 'site_common.py', 'if selfclosing and not svg and tag not in HTML_VOID:', 'if False:', 'test_r6_selfclosing_html'),
+    ('M67 strict end-tag nesting', 'site_common.py', "self.fail('unpaired or misnested end tag </' + tag + '>')", 'pass', 'test_r6_misnested_end'),
+    ('M68 stray end tags', 'site_common.py', "self.fail('unpaired or misnested end tag </' + tag + '>')", 'pass', 'test_r6_stray_end'),
+    ('M69 explicit closure at EOF', 'site_common.py', "self.fail('unclosed non-void elements: ' + ', '.join(n.tag for n in self.stack[1:]))", 'pass', 'test_r6_unclosed'),
+    ('M70 unique document root', 'site_common.py', "self.fail('document requires exactly one root html')", 'pass', 'test_r6_document_root'),
+    ('M71 head/body cardinality', 'site_common.py', "self.fail('document requires exactly one head followed by one body')", 'pass', 'test_r6_head_body_cardinality'),
+    ('M72 head then body order', 'site_common.py', "self.fail('html must contain exactly head then body')", 'pass', 'test_r6_head_body_order'),
+    ('M73 direct head/body parents', 'site_common.py', "self.fail('head/body must be direct children of html')", 'pass', 'test_r6_head_body_parent'),
+    ('M74 head element model', 'site_common.py', "self.fail('head may contain only meta, title and link')", 'pass', 'test_r6_head_elements'),
+    ('M75 structural whitespace only', 'site_common.py', "self.fail('only whitespace text allowed in document/head/list structure')", 'pass', 'test_r6_structural_text'),
+    ('M76 CSP before every link', 'site_common.py', "self.fail('CSP must precede every link')", 'pass', 'test_r6_csp_before_link'),
+    ('M77 phrasing content models', 'site_common.py', 'if parent.tag in PHRASING_PARENTS and tag not in PHRASING:', 'if False:', 'test_r6_phrasing_models'),
+    ('M78 list child model', 'site_common.py', "if parent.tag in {'ul', 'ol'} and tag != 'li':", 'if False:', 'test_r6_list_models'),
+    ('M79 list text model', 'site_common.py', "{'', 'html', 'head', 'ul', 'ol'}", "{'', 'html', 'head'}", 'test_r6_structural_text'),
+    ('M80 li direct list parent', 'site_common.py', "self.fail('li must be a direct child of ul/ol')", 'pass', 'test_r6_list_models'),
+    ('M81 li flow vocabulary', 'site_common.py', "self.fail('li requires explicitly nested flow content')", 'pass', 'test_r6_li_flow'),
+    ('M82 HTML flow model', 'site_common.py', "if parent.tag in FLOW - PHRASING - {'ul', 'ol'} | {'body'} and tag not in FLOW:", 'if False:', 'test_r6_flow_models'),
+    ('M83 nested anchors', 'site_common.py', "self.fail('nested anchors forbidden')", 'pass', 'test_r6_nested_anchor'),
+    ('M84 title RCDATA', 'site_common.py', "self.fail('HTML title must contain text only (RCDATA)')", 'pass', 'test_r6_title_rcdata'),
+    ('M85 SVG integration text only', 'site_common.py', "self.fail('SVG title/desc/text must contain text only')", 'pass', 'test_r6_svg_integration'),
+    ('M86 double-quoted attributes', 'site_common.py', "self.fail('attribute values must be double-quoted')", 'pass', 'test_r6_attributes_quoted'),
+    ('M87 attribute whitespace separation', 'site_common.py', "self.fail('attributes must be separated by whitespace')", 'pass', 'test_r6_attribute_separation'),
+    ('M88 no literal less-than in attributes', 'site_common.py', "self.fail('literal < forbidden in attribute values')", 'pass', 'test_r6_attribute_less_than'),
+    ('M89 UTF-8 declaration and placement', 'site_common.py', "self.fail('first head element must be the unique byte-exact UTF-8 charset meta')", 'pass', 'test_r6_charset'),
+    ('M90 encoding sniff window', 'site_common.py', "self.fail('UTF-8 charset declaration must finish within first 1024 bytes')", 'pass', 'test_r6_charset_sniff_window'),
+    ('M91 malformed start token', 'site_common.py', "self.fail('malformed start tag or literal < in text')", 'pass', 'test_r6_malformed_tokens'),
+    ('M92 malformed end token', 'site_common.py', "self.fail('malformed end tag')", 'pass', 'test_r6_malformed_tokens'),
+    ('M93 malformed attribute token', 'site_common.py', "self.fail('malformed attribute/start tag')", 'pass', 'test_r6_malformed_tokens'),
+    ('M94 browser whitespace insertion', 'site_common.py', "elif parent.tag == 'html' and not parent.children:", 'elif False:', 'test_r6_document_whitespace'),
+    ('M95 trailing whitespace placement', 'site_common.py', 'parent = bodies[0]', 'parent = self.root', 'test_r6_document_whitespace'),
+    ('M96 invalid UTF-8 fails closed', 'site_common.py', "page.errors.append('invalid UTF-8 document bytes')", 'pass', 'test_r6_utf8_bytes'),
+    ('M97 li flow model', 'site_common.py', "if parent.tag == 'li' and tag not in FLOW:", "if False:", 'test_r6_li_flow'),
+
+    ('M98 addendum 2 font CSP', 'allowlist.py', " font-src 'self';", '', 'test_v4_old_p4_csp'),
+    ('M99 exact font directory vocabulary', 'site_common.py', "if p.relative_to(root).parts[0] == 'fonts' and name not in FONT_HASHES:", 'if False:', 'test_v4_extra_font'),
+    ('M100 font and licence hashes', 'site_common.py', 'if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:', 'if False:', 'test_v4_font_hash'),
+    ('M101 woff2 magic bytes', 'site_common.py', "if name.endswith('.woff2') and (not path.is_file() or path.read_bytes()[:4] != b'wOF2'):", 'if False:', 'test_v4_font_magic'),
+    ('M102 CSS font origin and resource guard', 'check_no_third_party.py', "if re.search(r'url\\s*\\(|(?:-webkit-)?image-set\\s*\\(|@import\\b|@font-face\\b', css, re.I):", 'if False:', 'test_v4_font_face_origin'),
+    ('M103 exact Legal bytes', 'legal_pins.py', 'chunks[0] != pin.read_bytes()', 'False', 'test_v4_legal_bytes'),
+    ('M104 Legal element cardinality', 'legal_pins.py', 'len(elements) != 1 or len(chunks) != 1', 'False', 'test_v4_second_legal_element'),
+    ('M105 footer byte pin wiring', 'check_invariants.py', "errors.extend(pin_errors(root, path, page, 'footer'))", 'pass', 'test_v4_footer_svg'),
+    ('M106 privacy byte pin wiring', 'check_privacy_text.py', "errors.extend(pin_errors(root, path, page, 'article'))", 'pass', 'test_v4_notice_svg'),
+    ('M107 approved footer semantics', 'check_invariants.py', "errors.extend('Approved footer pin: ' + e for e in footer_errors(approved, 'index.html'))", 'pass', 'test_v4_pin_semantics'),
+    ('M108 approved privacy D26 semantics', 'check_privacy_text.py', "elif normalized(visible_text(approved.root)) != normalized(markdown_text(raw.decode('utf-8'))):", 'elif False:', 'test_v4_pin_semantics'),
+    ('M109 missing footer pin', 'check_invariants.py', "errors.append('Missing or invalid approved footer pin')", 'pass', 'test_v4_missing_pins'),
+    ('M110 missing privacy pin', 'check_privacy_text.py', "errors.append('Missing or invalid approved privacy notice pin')", 'pass', 'test_v4_missing_pins'),
+    ('M111 pin single exact fragment', 'legal_pins.py', 'if element_bytes(raw, tag) != [raw]:', 'if False:', 'test_v4_pin_validation'),
+    ('M112 pin strict subset validation', 'legal_pins.py', 'if page.errors or sum(n.tag == tag for n in page.nodes) != 1:', 'if False:', 'test_v4_pin_validation'),
+    ('M113 pin privacy vocabulary', 'check_privacy_text.py', "errors.extend('Approved privacy pin: forbidden notice element' for n in approved.nodes\n                      if n.tag not in NOTICE_TAGS | {'head', 'meta'})", 'pass', 'test_v4_pin_notice_vocabulary'),
+    ('M114 pin privacy visibility', 'check_privacy_text.py', "errors.extend('Approved privacy pin: ' + e for e in\n                      visibility_errors(approved, 'privacy.html', approved_main, 'Privacy notice'))", 'pass', 'test_v4_pin_notice_visibility'),
+    ('M115 banned copy includes aria-hidden SVG', 'check_invariants.py', 'normalized(copy_text(page.root))', 'normalized(visible_text(page.root))', 'test_v4_banned_aria_svg'),
+
+    ('M116 pinned D26 link semantics', 'check_privacy_text.py', "errors.extend('Approved privacy pin: ' + e for e in notice_link_errors(approved, approved_main))", 'pass', 'test_v4_pin_notice_links'),
+
+    ('M117 exact Legal discovery exceptions', 'site_common.py', 'p.relative_to(root).as_posix() not in LEGAL_PINS', "p.relative_to(root).parts[0] != 'legal'", 'test_all_document_suffixes_and_no_exclusions'),
+
+    ('M118 approved image bytes and presence', 'site_common.py',
+     "if not path.is_file() or hashlib.sha256(data).hexdigest() != digest:",
+     'if False:', 'test_logo_image_hashes'),
+    ('M119 PNG signature', 'site_common.py',
+     "if name.endswith('.png') and not data.startswith(b'\\x89PNG\\r\\n\\x1a\\n'):",
+     'if False:', 'test_logo_png_signature'),
+    ('M120 pinned img src', 'allowlist.py',
+     "if not any(exact(node, 'src', name) for name in IMAGE_HASHES):",
+     'if False:', 'test_logo_img_source'),
+    ('M121 unknown image file', 'site_common.py',
+     "if p.suffix.lower() in {'.png', '.svg', '.ico'} and name not in IMAGE_HASHES:",
+     'if False:', 'test_logo_unknown_image'),
+    ('M122 pinned icon and apple-touch-icon href', 'allowlist.py',
+     "if not any(exact(node, 'href', name) for name in IMAGE_HASHES):",
+     'if False:', 'test_logo_icon_source'),
+    ('M123 image attribute vocabulary', 'allowlist.py',
+     'if key not in table.get(node.tag, set()):',
+     "if node.tag != 'img' and key not in table.get(node.tag, set()):", 'test_logo_img_attributes'),
+    ('M124 privacy logo identity', 'check_privacy_text.py',
+     "errors.append('Privacy header brand must match the approved theme images and home link')",
+     'pass', 'test_logo_privacy_brand'),
+    ('M125 ICO signature', 'site_common.py', "if name.endswith('.ico') and not data.startswith(b'\\x00\\x00\\x01\\x00'):", 'if False:', 'test_favicon_ico_signature'),
+    ('M126 exact three icon links', 'allowlist.py', 'if tuple(n.raw for n in icons) != ICON_LINKS:', 'if False:', 'test_favicon_links_exact'),
+    ('M127 icon links in head', 'allowlist.py', "if any(n.parent.tag != 'head' for n in icons):", 'if False:', 'test_favicon_links_head'),
+    ('M128 retired image rejection', 'site_common.py', "if p.suffix.lower() in {'.png', '.svg', '.ico'} and name not in IMAGE_HASHES:", 'if False:', 'test_favicon_retired_files'),
+    ('M129 favicon.ico byte pin', 'site_common.py', 'if not path.is_file() or hashlib.sha256(data).hexdigest() != digest:', "if name != 'favicon.ico' and (not path.is_file() or hashlib.sha256(data).hexdigest() != digest):", 'test_logo_image_hashes'),
+    ('M130 coami-icon.svg byte pin', 'site_common.py', 'if not path.is_file() or hashlib.sha256(data).hexdigest() != digest:', "if name != 'coami-icon.svg' and (not path.is_file() or hashlib.sha256(data).hexdigest() != digest):", 'test_logo_image_hashes'),
+    ('M131 apple-touch-icon.png byte pin', 'site_common.py', 'if not path.is_file() or hashlib.sha256(data).hexdigest() != digest:', "if name != 'apple-touch-icon.png' and (not path.is_file() or hashlib.sha256(data).hexdigest() != digest):", 'test_logo_image_hashes'),
+    ('M132 manifest resource ban', 'check_no_third_party.py', "if tag == 'link' and LINK_RELS.intersection((attr.get('rel') or '').lower().split()):", 'if False:', 'test_favicon_manifest'),
+
+]
+
+
+def main():
+    caught = 0
+    with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR', tempfile.gettempdir())) as temporary:
+        candidate = Path(temporary) / 'candidate'
+        # Fresh copy for each mutant; no mutation ever reaches the working tree.
+        for label, script, old, new, test in MUTANTS:
+            shutil.copytree(SOURCE, candidate)
+            baseline = subprocess.run([sys.executable, '-I', '-B', 'scripts/test_checks.py',
+                                       'ChecksTest.' + test], cwd=candidate,
+                                      capture_output=True, text=True)
+            if baseline.returncode:
+                print(f'{label}: BASELINE FAILED — not counted as caught', flush=True)
+                print(baseline.stdout + baseline.stderr, flush=True)
+                shutil.rmtree(candidate)
+                continue
+            path = candidate / 'scripts' / script
+            source = path.read_text()
+            if source.count(old) != 1:
+                raise AssertionError(f'{label}: edit must have exactly one source match')
+            path.write_text(source.replace(old, new, 1))
+            result = subprocess.run([sys.executable, '-I', '-B', 'scripts/test_checks.py',
+                                     'ChecksTest.' + test], cwd=candidate,
+                                    capture_output=True, text=True)
+            output = result.stdout + result.stderr
+            killed = result.returncode == 1 and 'FAILED (failures=' in output and 'ERROR:' not in output
+            caught += killed
+            print(f'{label}: {"CAUGHT" if killed else "SURVIVED/ERROR"} — {test}', flush=True)
+            if not killed:
+                print(output, flush=True)
+            shutil.rmtree(candidate)
+    print(f'Mutants caught/total: {caught}/{len(MUTANTS)}')
+    return caught != len(MUTANTS)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

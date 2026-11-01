@@ -1,0 +1,45 @@
+"""Owner-reviewed Legal elements compared as exact UTF-8 bytes, no normalization.
+
+Only these two .html files are raw baselines, never discovered as site pages.
+The ordinary strict-subset parser and semantic Legal checks also validate them.
+"""
+import re
+from site_common import Page
+
+PINS = {'footer': 'legal/approved-footer.html',
+        'article': 'legal/approved-privacy-notice.html'}
+
+
+def element_bytes(raw, tag):
+    return re.findall(rb'<' + tag.encode('ascii') + rb'\b[^>]*>.*?</' +
+                      tag.encode('ascii') + rb'>', raw, re.S)
+
+
+def pin_errors(root, path, page, tag):
+    pin = root / PINS[tag]
+    elements = [n for n in page.nodes if n.tag == tag]
+    chunks = element_bytes(path.read_bytes(), tag)
+    if (not pin.is_file() or len(elements) != 1 or len(chunks) != 1 or
+            chunks[0] != pin.read_bytes()):
+        return [f'{path.name}: Legal {tag} must occur exactly once and match its approved pin byte for byte']
+    return []
+
+
+def pin_page(root, tag):
+    pin = root / PINS[tag]
+    if not pin.is_file():
+        return None
+    raw = pin.read_bytes()
+    if element_bytes(raw, tag) != [raw]:
+        return None
+    try:
+        fragment = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return None
+    if tag == 'article':
+        fragment = '<main id="main"><div class="wrap">' + fragment + '</div></main>'
+    page = Page('<!doctype html><html lang="en-GB"><head><meta charset="utf-8">'
+                '</head><body>' + fragment + '</body></html>')
+    if page.errors or sum(n.tag == tag for n in page.nodes) != 1:
+        return None
+    return page

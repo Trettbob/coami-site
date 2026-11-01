@@ -1,0 +1,16 @@
+{
+  "defaults": {
+    "standard": "WCAG2AA",
+    "runners": ["axe"],
+    "rules": ["autocomplete-valid", "avoid-inline-spacing", "target-size"],
+    "timeout": 30000,
+    "chromeLaunchConfig": {
+      "args": ["--no-sandbox"]
+    }
+  },
+  "urls": [
+    "http://127.0.0.1:8080/index.html",
+    "http://127.0.0.1:8080/privacy.html",
+    "http://127.0.0.1:8080/404.html"
+  ]
+}

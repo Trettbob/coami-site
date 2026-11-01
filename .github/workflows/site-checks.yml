@@ -1,0 +1,89 @@
+name: Site checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [html, links, no-third-party, a11y, authors, privacy-text, invariants]
+    steps:
+      - name: Candidate tree
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: site
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Trusted base checks
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: CHECK FILE CHANGES — SECURITY REVIEW REQUIRED
+        continue-on-error: true
+        if: github.event_name == 'pull_request'
+        working-directory: site
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          python3 -I -B - <<'PY'
+          import os, subprocess
+          result = subprocess.run(['git', 'diff', '--name-only', '-z',
+                                   os.environ['BASE_SHA'], os.environ['HEAD_SHA'], '--',
+                                   '.github/', 'scripts/', '.htmlvalidate.json', '.pa11yci.json', 'legal/'],
+                                  check=True, capture_output=True)
+          print('::warning::CHECK FILE CHANGES: Security must read changes to enforcement.')
+          names = [os.fsdecode(p) for p in result.stdout.split(b'\0') if p]
+          # repr prevents hostile filenames becoming Actions log commands.
+          print('\n'.join(repr(p) for p in names) or '(none)')
+          PY
+      - name: Select enforcement source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          checks="$GITHUB_WORKSPACE/site"
+          if [ "$EVENT_NAME" = pull_request ]; then
+            checks="$GITHUB_WORKSPACE/base"
+            if [ ! -e "$checks/scripts" ] && [ ! -e "$checks/.github/workflows/site-checks.yml" ] && [ ! -e "$checks/.htmlvalidate.json" ] && [ ! -e "$checks/.pa11yci.json" ]; then
+              echo '::warning::WARNING: BASE HAS NO CHECKS; THIS FIRST-PR RUN IS SELF-CHECKED'
+              checks="$GITHUB_WORKSPACE/site"
+            fi
+          fi
+          echo "CHECKS=$checks" >> "$GITHUB_ENV"
+      - name: Run selected checks against candidate
+        env:
+          CHECK_KIND: ${{ matrix.check }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        shell: bash
+        run: |
+          python3 -I -B "$CHECKS/scripts/ci_checks.py" --root "$GITHUB_WORKSPACE/site" -- "$CHECK_KIND"
