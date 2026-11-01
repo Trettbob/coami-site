@@ -9,9 +9,11 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from site_common import ROOT, BLOCKS, css_code, discovery_errors, normalized, read_page, site_files, visible_text
+from site_common import ROOT, BLOCKS, css_code, discovery_errors, normalized, read_page, site_files, visible_text, separated_text
 from legal_pins import PINS, element_bytes
 from check_invariants import FOOTER
+from page_pins import page_pin_errors
+from page_visibility import page_visibility_errors
 
 FEATURES_PATH = Path('legal/approved-features-copy.txt')  # trusted constant, never candidate config
 FEATURES_SHA256 = '1e70dd45e954473a3c81eb6d982757cecd2f402b0bbe906d2ac2aa03f2eaf83e'
@@ -89,8 +91,7 @@ def claim_errors(root):
         # vary here; the separate Features check still enforces exact Legal copy.
         chat_rows = set()
         def raw_text(n):
-            value = ''.join(c if isinstance(c, str) else raw_text(c) for c in n.children)
-            return ' ' + value + ' ' if n.tag in BLOCKS or n.tag == 'title' else value
+            return separated_text(n)
         if path.relative_to(root).as_posix() == 'features.html':
             rows = [n for n in page.nodes if n.tag == 'li' and
                     set((n.attr.get('class') or '').split()) & {'feature-row', 'feature-tile'} and
@@ -98,16 +99,19 @@ def claim_errors(root):
             for row, approved in zip(rows, approved_items):
                 if LIVE_CHAT.sub('live chat', normalized(raw_text(row))) == approved:
                     chat_rows.add(row)
-        def text(n):
+        def text(n, boundaries=True):
             if n in exempt:
                 # The existing Legal exception covers other claim words, but
                 # "live" has only the pinned feature-item exception above.
                 return ' ' + ' '.join(m[0] for m in re.finditer(r'\blive\b', raw_text(n), re.I)) + ' '
-            value = ''.join(c if isinstance(c, str) else text(c) for c in n.children)
+            # Retain the original inline-joined scan as an additional guard:
+            # se<span>cure</span> must still fail, as in the existing tests.
+            value = (separated_text(n, text) if boundaries else
+                     ''.join(c if isinstance(c, str) else text(c, False) for c in n.children))
             if n in chat_rows:
                 value = LIVE_CHAT.sub('chat', value)
-            return ' ' + value + ' ' if n.tag in BLOCKS or n.tag == 'title' else value
-        values = [normalized(text(page.root))]
+            return ' ' + value + ' ' if not boundaries and (n.tag in BLOCKS or n.tag == 'title') else value
+        values = [normalized(text(page.root)), normalized(text(page.root, False))]
         values.extend(value for n in page.nodes if not any(a in exempt for a in n.ancestors())
                       for key, value in n.attrs if value is not None)
         values.extend(m[0] for n in page.nodes if any(a in exempt for a in n.ancestors())
@@ -349,7 +353,8 @@ def check(root, kind='all'):
     root = Path(root)
     errors = discovery_errors(root)
     for name, checker in [('features', feature_errors), ('claims', claim_errors),
-                          ('purple', purple_errors), ('motion', motion_errors)]:
+                          ('purple', purple_errors), ('motion', motion_errors),
+                          ('pages', page_pin_errors), ('visibility', page_visibility_errors)]:
         if kind in {'all', name}:
             errors.extend(checker(root))
     return errors
@@ -357,7 +362,7 @@ def check(root, kind='all'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--check', choices=['all', 'features', 'claims', 'purple', 'motion'], default='all')
+    parser.add_argument('--check', choices=['all', 'features', 'claims', 'purple', 'motion', 'pages', 'visibility'], default='all')
     parser.add_argument('root', nargs='?', type=Path, default=ROOT)
     args = parser.parse_args()
     errors = check(args.root, args.check)

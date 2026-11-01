@@ -27,10 +27,13 @@ import ci_checks
 import site_common as common
 import legal_visibility as visibility
 import allowlist
+import page_pins
+import page_visibility
 
 SOURCE = Path(__file__).resolve().parents[1]
 ASSETS = [*common.HTML_PAGES, *allowlist.IMAGE_HASHES, 'style.css',
-          'CNAME', '.nojekyll', str(privacy.D26_PATH), *common.FONT_HASHES, *common.LEGAL_PINS, 'legal/approved-features-copy.txt']
+          'CNAME', '.nojekyll', str(privacy.D26_PATH), *common.FONT_HASHES, *common.LEGAL_PINS, 'legal/approved-features-copy.txt',
+          *('legal/page-pins/' + name + '.txt' for name in common.HTML_PAGES)]
 
 
 class ChecksTest(unittest.TestCase):
@@ -54,6 +57,212 @@ class ChecksTest(unittest.TestCase):
 
     def error(self, checker, fragment):
         self.assertIn(fragment, '\n'.join(checker(self.root)))
+
+    def test_r3_page_pin_baseline(self):
+        self.assertEqual(page_pins.page_pin_errors(self.root), [])
+        self.assertEqual(set(page_pins.PAGE_SHA256), set(common.HTML_PAGES))
+
+    def test_r3_page_pin_integrity(self):
+        for name in common.HTML_PAGES:
+            p = self.root / 'legal/page-pins' / (name + '.txt')
+            original = p.read_bytes()
+            for data in [original + b'\n', b'{}\n', None]:
+                if data is None:
+                    p.unlink()
+                else:
+                    p.write_bytes(data)
+                self.error(page_pins.page_pin_errors, name + ': page pin sha256 mismatch')
+                p.write_bytes(original)
+
+    def test_r3_added_about_sentence(self):
+        self.body('<p>Every feature is in the private pilot</p>', 'about.html')
+        self.error(page_pins.page_pin_errors, 'about.html: complete body skeleton differs')
+
+    def test_r3_changed_index_class(self):
+        self.edit('index.html', 'class="hero"', 'class="hero reading"')
+        self.error(page_pins.page_pin_errors, 'index.html: complete body skeleton differs')
+
+    def test_r3_reordered_section(self):
+        path = self.root / 'index.html'
+        source = path.read_text()
+        start = source.index('<section id="ami"')
+        middle = source.index('<section id="pilot"')
+        end = source.index('<section class="closing')
+        path.write_text(source[:start] + source[middle:end] + source[start:middle] + source[end:])
+        self.error(page_pins.page_pin_errors, 'index.html: complete body skeleton differs')
+
+    def test_r3_added_actions_split_spans(self):
+        self.body('<div class="actions"><span>All features are</span><span>live</span></div>')
+        self.error(page_pins.page_pin_errors, 'index.html: complete body skeleton differs')
+        self.error(v5.claim_errors, "index.html: banned claim word: 'live'")
+
+    def test_r3_pin_text_every_page(self):
+        for name in common.HTML_PAGES:
+            self.edit(name, '>Skip to content<', '>Skip to main content<')
+            self.error(page_pins.page_pin_errors, name + ': complete body skeleton differs')
+
+    def test_r3_pin_removed_element_every_page(self):
+        for name in common.HTML_PAGES:
+            self.edit(name, '<a class="skip" href="#main">Skip to content</a>', '')
+            self.error(page_pins.page_pin_errors, name + ': complete body skeleton differs')
+
+    def test_r3_pin_attributes(self):
+        original = (self.root / 'index.html').read_bytes()
+        for old, new in [('href="features.html"', 'href="about.html"'),
+                         ('aria-label="Main"', 'aria-label="Other"'),
+                         ('id="home-h"', 'id="other-h"'),
+                         ('src="img/coami-logo.svg"', 'src="img/coami-logo-light-on-dark.svg"'),
+                         ('alt="CoAmi"', 'alt="Other"'),
+                         ('tabindex="-1"', 'tabindex="0"')]:
+            (self.root / 'index.html').write_bytes(original)
+            self.edit('index.html', old, new)
+            self.error(page_pins.page_pin_errors, 'index.html: complete body skeleton differs')
+
+    def skeleton_variants(self, pairs):
+        for before, after in pairs:
+            with self.subTest(before=before, after=after):
+                self.assertNotEqual(page_pins.skeleton_bytes(common.Page('<body>' + before + '</body>')),
+                                    page_pins.skeleton_bytes(common.Page('<body>' + after + '</body>')))
+
+    def test_r3_skeleton_classes(self):
+        self.skeleton_variants([('<p class="a">Same</p>', '<p class="b">Same</p>')])
+
+    def test_r3_skeleton_attributes(self):
+        self.skeleton_variants([('<a href="index.html">Same</a>', '<a href="about.html">Same</a>')])
+
+    def test_r3_skeleton_text_slots(self):
+        self.skeleton_variants([('<p>A<span>B</span>C</p>', '<p>AC<span>B</span></p>'),
+                                ('<p>A B</p>', '<p>A  B</p>')])
+
+    def test_r3_skeleton_nesting(self):
+        self.skeleton_variants([('<div><p>A</p></div><p>B</p>', '<div><p>A</p><p>B</p></div>'),
+                                ('<p>A</p><p>B</p>', '<p>B</p><p>A</p>'),
+                                ('<p>A</p>', '<div>A</div>')])
+
+    def test_r3_split_claim_every_page(self):
+        for name in common.HTML_PAGES:
+            self.body('<div class="actions"><span>All features are</span><span>live</span></div>', name)
+            self.error(v5.claim_errors, name + ": banned claim word: 'live'")
+
+    def test_r3_text_element_boundaries(self):
+        for extract in [common.separated_text, common.visible_text, common.copy_text]:
+            for tag in ['span', 'a', 'strong', 'em', 'br', 'li', 'svg']:
+                fragment = ('<ul><li>All features are</li><li>live</li></ul>' if tag == 'li' else
+                            '<p>All features are<br>live</p>' if tag == 'br' else
+                            f'<div>All features are<{tag}>live</{tag}></div>')
+                with self.subTest(extract=extract.__name__, tag=tag):
+                    self.assertEqual(common.normalized(extract(common.Page(fragment).root)), 'All features are live')
+            self.assertEqual(common.normalized(extract(common.Page('<p>x<span></span>live</p>').root)), 'x live')
+            if extract is not common.separated_text:
+                self.assertEqual(common.normalized(extract(common.Page('<p>x<span hidden="hidden">other</span>live</p>').root)), 'x live')
+
+    def test_r3_claims_split_and_hidden(self):
+        for fragment in ['<p>All features are<strong>live</strong></p>',
+                         '<p>All features are<br>live</p>',
+                         '<div aria-hidden="true"><em>All features are</em><span>live</span></div>',
+                         '<p><span>available</span><span>now</span></p>']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body(fragment)
+            self.error(v5.claim_errors, 'index.html: banned claim word')
+
+    def test_r3_original_ban_split_words(self):
+        for fragment in ['<p>M<span>FA</span></p>', '<p><span>100</span><span>users</span></p>']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body(fragment)
+            self.error(invariants.check, 'index.html: banned visible copy')
+
+    def test_r3_raw_text_pin_exception_boundaries(self):
+        self.edit('features.html', 'Shared inbox and live chat', 'Shared inbox and <span></span>live chat')
+        self.assertEqual(v5.claim_errors(self.root), [])
+        self.error(page_pins.page_pin_errors, 'features.html: complete body skeleton differs')
+
+    def test_r3_disclaimer_brand_dark(self):
+        self.edit('features.html', 'class="feature-disclaimer"', 'class="feature-disclaimer brand-dark"')
+        self.error(page_pins.page_pin_errors, 'features.html: complete body skeleton differs')
+        self.error(page_visibility.page_visibility_errors, 'features.html: Visibility hiding rule .brand-dark')
+
+    def test_r3_status_spans_skip(self):
+        path = self.root / 'features.html'
+        text = path.read_text()
+        self.assertEqual(text.count('<span class="status '), 36)
+        path.write_text(text.replace('<span class="status ', '<span class="skip status '))
+        self.error(page_pins.page_pin_errors, 'features.html: complete body skeleton differs')
+        self.error(page_visibility.page_visibility_errors, 'features.html: Visibility hiding rule .skip')
+
+    def css_probe(self, rule):
+        (self.root / 'style.css').write_text((SOURCE / 'style.css').read_text() + '\n' + rule)
+        self.error(page_visibility.page_visibility_errors, 'Visibility hiding')
+
+    def test_r3_visibility_baseline(self):
+        self.assertEqual(page_visibility.page_visibility_errors(self.root), [])
+
+    def test_r3_visibility_sr_only(self):
+        self.css_probe('.feature-disclaimer { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }')
+
+    def test_r3_visibility_display(self):
+        for value in ['none', 'none !important', r'n\6f ne']:
+            self.css_probe('.status { display: ' + value + '; }')
+
+    def test_r3_visibility_hidden(self):
+        for prop in ['visibility', 'content-visibility']:
+            self.css_probe('.hero-description { ' + prop + ':hidden; }')
+
+    def test_r3_visibility_opacity_font(self):
+        for prop, value in [('opacity', '0'), ('opacity', '0%'), ('opacity', '.0'), ('opacity', '0e0'), ('font-size', '0px'), ('font', '0/0 Urbanist')]:
+            self.css_probe('.feature-content { ' + prop + ':' + value + '; }')
+
+    def test_r3_visibility_positioned(self):
+        for position in ['absolute', 'fixed']:
+            for offset in ['left:-9999px', 'top:100vh', 'inset-inline-start:-200vw']:
+                self.css_probe('.hero-copy { position:' + position + ';' + offset + '; }')
+
+    def test_r3_visibility_transform_indent(self):
+        for declaration in ['transform:translateX(-200vw)', 'translate:0 -200vh', 'text-indent:-9999px']:
+            self.css_probe('.feature-disclaimer {' + declaration + ';}')
+
+    def test_r3_visibility_collapsed(self):
+        for rule in ['.status { height:0; overflow:hidden; }',
+                     '.status { max-block-size:0px; overflow:clip; }',
+                     '.status { height:0; } .status { overflow:hidden; }',
+                     '.status { position:absolute; } .status { left:-9999px; }']:
+            self.css_probe(rule)
+
+    def test_r3_visibility_all_selectors(self):
+        for selector in ['.status:hover', '.feature-list span', 'p', '*', '[class~="status"]', r'.st\61 tus', '.status, .feature-disclaimer']:
+            self.css_probe(selector + ' {display:none;}')
+
+    def test_r3_visibility_context_and_other_css(self):
+        self.css_probe('@media (max-width:560px) { .feature-disclaimer {display:none;} }')
+        (self.root / 'style.css').write_bytes((SOURCE / 'style.css').read_bytes())
+        (self.root / 'extra.css').write_text('.status { opacity:0; }')
+        self.error(page_visibility.page_visibility_errors, 'Visibility hiding rule .status')
+
+    def test_r3_visibility_exception_rules_fixed(self):
+        for rule in ['.brand-dark {opacity:0;}', '.skip {display:none;}',
+                     '.brand-light {display:none;}', '.brand-dark p {display:none;}']:
+            self.css_probe(rule)
+
+    def test_r3_visibility_pin_required(self):
+        (self.root / 'legal/page-pins/features.html.txt').unlink()
+        self.error(page_visibility.page_visibility_errors, 'features.html: Visibility requires trusted page pin')
+
+    def test_r3_visibility_attributes(self):
+        for attr in ['hidden="hidden"', 'aria-hidden="true"', 'inert="inert"']:
+            (self.root / 'features.html').write_bytes((SOURCE / 'features.html').read_bytes())
+            self.edit('features.html', '<p class="feature-disclaimer"', '<p ' + attr + ' class="feature-disclaimer"')
+            self.error(page_visibility.page_visibility_errors, 'features.html: Visibility unapproved')
+
+    def test_r3_visibility_parse_fail_closed(self):
+        (self.root / 'style.css').write_text('.status {')
+        self.error(page_visibility.page_visibility_errors, 'Visibility: CSS parse failed')
+
+    def test_r3_pages_wiring(self):
+        self.body('<p>Every feature is in the private pilot</p>', 'about.html')
+        self.error(v5.check, 'about.html: complete body skeleton differs')
+
+    def test_r3_visibility_wiring(self):
+        self.css_probe('.status {display:none;}')
+        self.error(v5.check, 'Visibility hiding rule .status')
 
     def test_v5_footer_band(self):
         self.edit('privacy.html', '>Contact<', '>Other<')

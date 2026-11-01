@@ -35,7 +35,7 @@ python3 -I -B scripts/check_invariants.py -- .
 python3 -I -B scripts/check_v5.py -- .
 ```
 
-`check_v5.py --check features|claims|purple|motion -- .` exposes the individual
+`check_v5.py --check features|claims|purple|motion|pages|visibility -- .` exposes the individual
 checks. The fixed `/legal/approved-features-copy.txt` path is never selected by
 candidate config. Its UTF-8 JSON comes from the publication block between the
 first two separators in `../in/website-features-copy.md`; internal notes are
@@ -151,24 +151,78 @@ infinite` on the home-page ring, 208 by 208 px on desktop and 174 by 174 px at t
 the task. It is the single explicit existing infinite-motion exception; the CSS
 hash pins its exact dimensions and motion. Reduced-motion rules disable it.
 
-Verification: 211 passing tests (all 191 existing tests retained, with only
-required normalisation/claim-exception updates), and 169/169 mutants caught.
-The 20 added tests exercise claim scope/pin integrity and purple palette, hue,
-selector, SVG/HTML-attribute, parser and CI wiring guards. The 18 added mutants
-remove individual protections; a catch requires an assertion failure, never a
-syntax/import/runtime error. Each mutant gets a fresh automatically removed
-temporary tree. Git writes use only temporary repositories under TMPDIR, removed
-at completion. No network, installation or workspace Git write was used.
+Round 3 pins the complete body skeleton of every page under `legal/page-pins/`.
+Each JSON line records the element path and tag, ordered class list, every other
+attribute (including all href, aria-*, id, src and alt values), and ordered content
+slots containing exact direct text or a child path. Whitespace, empty elements,
+inline SVG, nesting and the placement of text around children are retained.
+Nothing is filtered for visibility. The fixed digest mapping in
+`scripts/page_pins.py` authenticates each pin; candidate config cannot select or
+regenerate it. Added, removed, reordered, reclassed, reparented or edited elements
+fail on all eight pages, even when a new sentence contains no banned word.
+All existing page, stylesheet and Legal pin bytes remain unchanged.
 
-See `../test.txt`, `../tree-run.txt` and `../DIFF-r1-to-r2.patch`.
-The complete-tree links, no-third-party, privacy-text and invariants CI entries
-pass. The authors entry passes against a synthetic noreply-only history of the
-complete out tree, stored solely in a temporary Git directory; actual publication
-history is unavailable in this job. HTML and accessibility package validators are
-unavailable offline (`ENOTCACHED`). Their complete-tree commands are attempted
-with `--offline --no-install` replacing npx's `--yes`; neither packages nor a
-local HTTP server are installed/started. All seven CI entries and the limitations
-are recorded in tree-run.txt. The strict HTML preflight runs over all eight pages
-and the three SVG assets, but does not replace the unavailable package/browser
-checks. Browser visual acceptance, WCAG verification and hosted settings remain
-unverified locally.
+The generator was run against the complete round-2 baseline, with no page edits:
+
+```sh
+python3 -I -B scripts/generate_page_pins.py --source ../in/base --destination legal/page-pins
+```
+
+This explicit review tool prints digests; it does not edit the trusted check.
+It is never called by CI. A separate temporary regeneration is byte-identical.
+
+The shared default text extractor now separates every element boundary,
+including inline spans, links, emphasis, empty elements, br, list items and SVG.
+Claims are scanned on this separated text on every page, including head/hidden
+text and attributes. The original inline-joined scans are also retained for both
+claim bans, preserving rejection of words split inside inline markup. The
+live-chat exception remains confined to complete, position-matched approved
+Features items with a valid Features pin; attributes remain outside it. Existing
+case and exact-phrase tests are unchanged. The privacy comparison now separates
+Markdown link boundaries and header navigation in the same way as the shared
+extractor; neither the D26 source nor its byte pins changed.
+
+The independent visibility audit parses every stylesheet and nested media or
+supports rule. It conservatively associates selectors with each used class,
+including ancestor/descendant and pseudo-selector appearances; selectors without
+class tokens are audited against all body elements. It rejects hiding display,
+visibility, clipping, zero opacity/font size, positioned offscreen offsets,
+large translations, offscreen text indentation, and zero-height/clipped-overflow
+combinations, including declarations split across rules. Unresolved visibility
+variables/arithmetic fail closed. No later cascade override excuses a hiding
+rule. Existing strict CSS parsing, stylesheet hash, resource checks and motion
+checks remain active. Only exact original hiding-rule fingerprints at exact
+pinned skip-link or logo nodes are exempt; adding these classes elsewhere fails.
+Unapproved visibility attributes fail independently as well.
+
+Current CSS audit findings (preserved): `.skip` is fixed and translated -180%
+until focus (style.css:67); `.brand-dark` is hidden in the default theme (:73);
+`.brand-light` is hidden in dark mode (:75). These are the only hiding qualified
+rules, and their exceptions are bound to pinned nodes and complete rules.
+`arrive` (:173) and `enter-view` (:175) additionally start at opacity 0 in
+transient keyframe states. The visibility audit covers qualified element rules,
+not transient keyframe states; these existing animations retain the unchanged
+CSS hash and reduced-motion guards. The previously reported enso motion finding
+above also remains. No page or CSS change was forced or made.
+
+Verification: 247 passing tests, retaining all 211 prior test methods, plus
+36 new regressions; 200/200 mutants caught, retaining all 169 prior mutant IDs
+and adding 31. Each catch requires an assertion failure, never a syntax, import
+or runtime error. M115 now removes the shared aria-hidden copy guard so it covers
+both retained scans. `MUTANTS.md` maps every mutant to its check and regression.
+Temporary mutation trees and synthetic author-history repositories are removed
+automatically. No network, installation or workspace Git write was used.
+
+See `../test.txt`, `../tree-run.txt` and `../DIFF-r2-to-r3.patch`.
+Complete-tree links, no-third-party, privacy-text and invariants CI entries pass.
+The authors entry uses a synthetic noreply-only history with the complete out
+tree as its worktree and all Git writes in an automatically removed temporary
+Git directory. Actual publication history is unavailable in this job.
+HTML and accessibility package commands are attempted offline with installation
+disabled (`--offline --no-install` replacing npx's `--yes`); unavailable packages
+cannot be installed. Accessibility uses the exact trusted config and all eight
+page URLs, without starting a local server because package execution is
+unavailable. All seven CI entries and their actual results are recorded in
+tree-run.txt. Strict preflight covers all eight pages and three SVG assets;
+package HTML validation, browser accessibility/visual checks and hosted settings
+remain unverified locally.

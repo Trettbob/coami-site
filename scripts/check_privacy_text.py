@@ -24,7 +24,9 @@ NOTICE_TAGS = {'html', 'body', 'main', 'div', 'article', 'h1', 'h2', 'p', 'ul',
 
 
 def markdown_text(text):
-    text = re.sub(r'!?\[([^\]]*)\]\([^\n)]*\)', r'\1', text)
+    # Match the shared extractor's boundaries around Markdown links, including
+    # punctuation immediately after a link. No Legal source bytes change.
+    text = re.sub(r'!?\[([^\]]*)\]\([^\n)]*\)', r' \1 ', text)
     text = re.sub(r'^\s{0,3}#{1,6}\s+', '', text, flags=re.M)
     text = re.sub(r'^\s*[-+*]\s+', '', text, flags=re.M)
     text = re.sub(r'([*_`~])', '', text)
@@ -106,7 +108,7 @@ def check(root):
     footers = [n for n in page.nodes if n.tag == 'footer']
     skips = [n for n in page.nodes if n.tag == 'a' and n.attr.get('class') == 'skip'
              and n.attr.get('href') == '#main' and normalized(visible_text(n)) == 'Skip to content']
-    if len(headers) != 1 or normalized(visible_text(headers[0])) != 'FeaturesHow it worksPilotAbout Register interest':
+    if len(headers) != 1 or normalized(visible_text(headers[0])) != 'Features How it works Pilot About Register interest':
         errors.append('Privacy header visible text must match the approved v5 navigation')
     brands = [n for n in page.nodes if n.tag == 'a' and n.attr.get('class') == 'brand'
               and any(h in n.ancestors() for h in headers)]

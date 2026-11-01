@@ -48,8 +48,11 @@ def check(root):
         if path.suffix.lower() != '.svg':
             errors.extend(f'{name}: {e}' for e in footer_errors(page, name))
             errors.extend(pin_errors(root, path, page, 'footer'))
-        for match in BANNED.finditer(normalized(copy_text(page.root))):
-            errors.append(f'{name}: banned visible copy: {match[0]!r}')
+        # Keep the original inline-joined scan as well as the separated scan;
+        # neither split words nor adjacent words can escape the existing ban.
+        for value in [normalized(copy_text(page.root)), normalized(copy_text(page.root, False))]:
+            for match in BANNED.finditer(value):
+                errors.append(f'{name}: banned visible copy: {match[0]!r}')
         public_copy = []
         for node in page.nodes:
             if node.tag == 'title':

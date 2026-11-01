@@ -450,19 +450,30 @@ def hidden(node):
 def visible_text(node):
     if hidden(node):
         return ''
-    result = []
-    for child in node.children:
-        result.append(child if isinstance(child, str) else visible_text(child))
-    value = ''.join(result)
-    return ' ' + value + ' ' if node.tag in BLOCKS else value
+    return separated_text(node, visible_text)
 
 
-def copy_text(node):
+def separated_text(node, extract=None):
+    """Separate EVERY element boundary, including empty/inline/SVG elements.
+
+    With no filter this includes head, hidden and accessibility-only text.
+    Callers can supply their own visibility or narrowly pinned exemptions.
+    """
+    extract = extract or separated_text
+    value = ''.join(c if isinstance(c, str) else ' ' + extract(c) + ' ' for c in node.children)
+    if not node.tag and not value.strip():
+        return ''
+    return ' ' + value + ' '
+
+
+def copy_text(node, boundaries=True):
     # aria-hidden affects accessibility, not visual rendering. SVG text counts.
     if node.tag in {'head', 'template'} or 'hidden' in node.attr:
         return ''
-    value = ''.join(c if isinstance(c, str) else copy_text(c) for c in node.children)
-    return ' ' + value + ' ' if node.tag in BLOCKS else value
+    if not boundaries:
+        value = ''.join(c if isinstance(c, str) else copy_text(c, False) for c in node.children)
+        return ' ' + value + ' ' if node.tag in BLOCKS else value
+    return separated_text(node, copy_text)
 
 
 def normalized(text):
