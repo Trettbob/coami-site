@@ -10,6 +10,7 @@
       "target-size"
     ],
     "timeout": 30000,
+    "wait": 2000,
     "chromeLaunchConfig": {
       "args": [
         "--no-sandbox"
