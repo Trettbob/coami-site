@@ -737,7 +737,8 @@ class ChecksTest(unittest.TestCase):
         self.markup_error('Markup allowlist: link rel must be byte-exact stylesheet or icon')
 
     def test_r5_complete_tree_commands(self):
-        shutil.copytree(SOURCE, self.root, dirs_exist_ok=True)
+        shutil.copytree(SOURCE, self.root, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns('.git'))  # fixture history only
         self.assertTrue((self.root / '.github/CODEOWNERS').is_file())
         for script in ['site_common.py', 'check_links.py', 'check_no_third_party.py',
                        'check_privacy_text.py', 'check_invariants.py']:
