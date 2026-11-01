@@ -35,7 +35,7 @@ python3 -I -B scripts/check_invariants.py -- .
 python3 -I -B scripts/check_v5.py -- .
 ```
 
-`check_v5.py --check features|claims|purple|motion|pages|visibility -- .` exposes the individual
+`check_v5.py --check features|claims|purple|motion|pages|visibility|hero-contrast -- .` exposes the individual
 checks. The fixed `/legal/approved-features-copy.txt` path is never selected by
 candidate config. Its UTF-8 JSON comes from the publication block between the
 first two separators in `../in/website-features-copy.md`; internal notes are
@@ -316,8 +316,8 @@ isolation, M205 raises the glow to the content layer and M206 incorrectly marks
 the decorative negative layer as hiding. Assertion failures alone count as
 mutant catches. No network, installs or workspace Git writes are used.
 
-Current artifacts: `../test.txt`, `../tree-run.txt` and
-`../DIFF-r4-to-r5.patch`. The tree run attempts all seven CI entries using the
+Round 5 artifacts were `../test.txt`, `../tree-run.txt` and
+`../DIFF-r4-to-r5.patch` (superseded below). The tree run attempts all seven CI entries using the
 complete `out` tree. Package invocations use `--offline --no-install` and a
 temporary npm cache; html-validate and pa11y-ci are unavailable (ENOTCACHED).
 Links, no-third-party, privacy-text and invariants pass. The a11y entry stops
@@ -327,3 +327,73 @@ returning ENOTCACHED. Author checking passes using only a synthetic noreply
 history in an automatically deleted `$TMPDIR` repository. Commands and actual
 entry results are recorded in `tree-run.txt`; publication history, hosted checks
 and visual/browser confirmation are not verified by this offline run.
+
+
+Round 6 addresses axe's reported incomplete background resolution beneath the
+hero pseudo-element. `scripts/ci_checks.py` copies the whole candidate into the
+existing temporary directory, appends exactly one rule to that copy's stylesheet:
+`.hero::before { display: none !important; }`, and serves the copy. The source
+candidate is never opened for writing. Config and logs remain outside both the
+candidate and the served copy; the entire temporary directory is removed on
+success or failure. The published glow, all page words, CSS bytes, pins,
+validator versions, trusted config, rules, wait and reduced-motion setting are
+unchanged. No axe rule or incomplete-result handling is disabled.
+
+The `invariants` CI entry now also enforces `hero-contrast` through `check_v5.py`.
+Its pure-Python implementation in `scripts/hero_contrast.py` consumes the existing
+CSS parser, requires both complete theme palettes, and parses six-digit opaque
+hex surface/text colours and space-separated RGB glow channels with percentage
+alpha. Missing/duplicate/scoped tokens, unsupported colour forms, out-of-range
+channels/alpha, malformed CSS and unreadable CSS fail closed. The bounded hero
+paint contract checks the actual ink/soft/button colour references and surfaces.
+The pseudo-element must be exactly the empty, absolute, inset-zero decoration,
+with `content: ""`, `pointer-events: none`, `z-index: -1` and the original gradient;
+text, extra declarations, different stacking or a second decoration rule fail.
+The independent stylesheet hash and all prior page/visibility checks still run.
+
+The calculation composites unrounded sRGB channels as
+`peak = alpha * glow + (1 - alpha) * paper`, then applies WCAG sRGB linearisation
+and relative luminance. Peak RGB is (242.55, 242.8, 243.35) in light mode and
+(30.4, 29.2, 33.84) in dark mode. Monotone channel direction is required; endpoint
+luminances and a foreground-crossing check additionally cover every intermediate
+radial stop. Ratios below are computed at peak alpha, without rounding before
+comparison. Filled buttons use their opaque fill, which covers the glow.
+
+| Hero colour pair | Light ratio | Dark ratio | Enforced minimum |
+| --- | --- | --- | --- |
+| Ink / peak glow (heading and outlined-button text) | 14.786630:1 | 14.454961:1 | 4.5:1 |
+| Soft / peak glow (12px eyebrow, 18–20px description) | 5.992412:1 | 8.387435:1 | 4.5:1 |
+| Primary button text / fill | 16.438550:1 | 14.223653:1 | 4.5:1 |
+| Primary button text / hover fill | 12.736615:1 | 12.162296:1 | 4.5:1 |
+| Outlined-button text / hover fill | 14.223653:1 | 13.036719:1 | 4.5:1 |
+| Non-text button border / peak glow | 3.846526:1 | 6.155360:1 | 3:1 |
+
+Every text role is checked at 4.5:1, including the heading; the implementation
+uses no large-text exemption. WCAG allows 3:1 only for large text (24 CSS px,
+or about 18.67 CSS px when bold); the small eyebrow, description and buttons
+retain 4.5:1. The border row is a non-text graphical boundary, checked at its
+separate 3:1 requirement. If 4.5:1 was intended for the border itself as well as
+the outlined button's text, that cannot be met with the required unchanged CSS:
+the existing light border is 3.846526:1. No text threshold is reduced for it.
+
+Round 6 verification: **266 passing tests**, comprising all 252 prior methods
+and 14 new methods; **227/227 mutants caught**, retaining all 206 prior mutants
+and adding M207–M227. Tests cover excessive glow, invalid/missing/scoped tokens,
+colour maths and peak blends, both theme thresholds, small text, button states,
+non-text borders, non-decorative pseudo-elements, parse failures, CI wiring,
+and the exact temporary-copy override and preservation of every candidate byte,
+including cleanup after validator failure. Only assertion failures count as
+mutant catches; each mutant also needs a passing focused baseline.
+
+Current artifacts are `../test.txt` (tests and mutants), `../tree-run.txt`
+(all seven CI entries), and `../DIFF-r5-to-r6.patch` (`diff -ru ./in/base ./out`
+from the job folder). The tree run forces
+`--offline --no-install` with empty temporary npm caches. html-validate@9.0.0
+and pa11y-ci@4.0.0 fail offline with ENOTCACHED. The full a11y entry also cannot
+bind localhost in this sandbox (PermissionError); a separate dependency probe
+mocks only server startup/readiness and invokes the real generated config and
+package command against the actual audit copy. This does not constitute a
+browser validation. Links, no-third-party, privacy-text and invariants pass.
+Authors passes against an automatically removed synthetic noreply-only history
+under `$TMPDIR`; publication history is unavailable. No network, installs or
+workspace Git writes were used; temporary repos/caches/copies are deleted.

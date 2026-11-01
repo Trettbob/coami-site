@@ -29,6 +29,7 @@ import legal_visibility as visibility
 import allowlist
 import page_pins
 import page_visibility
+import hero_contrast as hero
 
 SOURCE = Path(__file__).resolve().parents[1]
 ASSETS = [*common.HTML_PAGES, *allowlist.IMAGE_HASHES, 'style.css',
@@ -57,6 +58,156 @@ class ChecksTest(unittest.TestCase):
 
     def error(self, checker, fragment):
         self.assertIn(fragment, '\n'.join(checker(self.root)))
+
+    def test_r6_contrast_baseline(self):
+        self.assertEqual(hero.hero_contrast_errors(self.root), [])
+        report = hero.hero_contrast_report(self.root)
+        expected = {
+            'light': ((242.55, 242.8, 243.35), (14.786630, 5.992412, 3.846526, 16.438550, 12.736615, 14.223653)),
+            'dark': ((30.4, 29.2, 33.84), (14.454961, 8.387435, 6.155360, 14.223653, 12.162296, 13.036719)),
+        }
+        for theme, (rgb, ratios) in expected.items():
+            for actual, want in zip(report[theme]['peak_rgb'], rgb):
+                self.assertAlmostEqual(actual, want, places=6)
+            self.assertEqual(len(report[theme]['ratios']), len(ratios))
+            for actual, want in zip(report[theme]['ratios'].values(), ratios):
+                self.assertAlmostEqual(actual, want, places=6)
+
+    def test_r6_contrast_math(self):
+        self.assertEqual(hero.contrast((0, 0, 0), (1, 1, 1)), 21)
+        self.assertAlmostEqual(hero.luminance((0.04, 0.04, 0.04)), 0.04 / 12.92)
+        self.assertAlmostEqual(hero.luminance((0.5, 0.5, 0.5)), 0.21404114048223255)
+        self.assertEqual(hero.colour('rgb(150 158 170 / 8%)', True),
+                         ((150/255, 158/255, 170/255), 0.08))
+
+    def test_r6_stronger_glow(self):
+        self.edit('style.css', 'rgb(150 158 170 / 8%)', 'rgb(150 158 170 / 100%)')
+        self.error(hero.hero_contrast_errors, 'dark:')
+        self.error(hero.hero_contrast_errors, 'contrast')
+
+    def test_r6_unparsable_colours(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for old in ('rgb(238 240 243 / 65%)', 'rgb(150 158 170 / 8%)',
+                    '#fbf8f4', '#141216', '#241c2c', '#bdb5c1'):
+            for bad in ('var(--unknown)', 'rgb(bad)', '#gggggg', 'color(display-p3 1 0 0)'):
+                path.write_text(original.replace(old, bad, 1))
+                self.error(hero.hero_contrast_errors, 'unparsable colour/token')
+        for value in ('rgb(256 0 0 / 8%)', 'rgb(150 158 170 / 101%)'):
+            path.write_text(original.replace('rgb(150 158 170 / 8%)', value))
+            self.error(hero.hero_contrast_errors, 'unparsable colour/token')
+
+    def test_r6_missing_and_scoped_tokens(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for token in sorted(hero.TOKENS):
+            import re
+            path.write_text(re.sub(re.escape(token) + r':[^;]+;', '', original, count=1))
+            self.error(hero.hero_contrast_errors, 'missing hero token')
+        for rule, message in [(':root { --glow: rgb(1 2 3 / 4%); }', 'duplicate hero token'),
+                              ('.hero { --ink: #ffffff; }', 'unsupported hero token scope'),
+                              ('@media (max-width: 1px) { :root { --soft: #ffffff; } }', 'unsupported hero token scope')]:
+            path.write_text(original + rule)
+            self.error(hero.hero_contrast_errors, message)
+
+    def test_r6_decorative_layer(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for old, new in [('content: ""', 'content: "text"'), ('content: ""', 'content: attr(title)'),
+                         ('pointer-events: none', 'pointer-events: auto'),
+                         ('z-index: -1', 'z-index: 0'), ('position: absolute; inset: 0;', 'position: fixed;'),
+                         ('content: "";', 'content: ""; color: red;'),
+                         ('.hero::before', '.hero:before'),
+                         ('var(--glow), transparent', 'var(--glow), white')]:
+            path.write_text(original.replace(old, new, 1))
+            self.error(hero.hero_contrast_errors, 'empty decorative layer')
+        path.write_text(original + '.hero::before { content: "text"; }')
+        self.error(hero.hero_contrast_errors, 'empty decorative layer')
+
+    def test_r6_paint_contract(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for old, new in [('color: var(--primary-text)', 'color: var(--soft)'),
+                         ('p { color: var(--soft); }', 'p { color: #999999; }'),
+                         ('.btn.line { color: var(--ink)', '.btn.line { color: var(--soft)')]:
+            path.write_text(original.replace(old, new, 1))
+            self.error(hero.hero_contrast_errors, 'colour references changed')
+        for rule in ('.hero-description { color: #999999; }',
+                     '@media (max-width: 600px) { .btn { color: #999999; } }'):
+            path.write_text(original + rule)
+            self.error(hero.hero_contrast_errors, 'unsupported hero paint')
+
+    def test_r6_text_thresholds(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        # Each small-text role fails independently, including 3--4.5:1 colours.
+        for old, new, message in [('--soft: #625969', '--soft: #817785', 'soft / peak glow'),
+                                  ('--ink: #241c2c', '--ink: #817785', 'ink / peak glow'),
+                                  ('--primary-text: #ffffff', '--primary-text: #625969', 'primary text / fill'),
+                                  ('--primary-hover: #382f40', '--primary-hover: #ffffff', 'primary text / hover'),
+                                  ('--neutral: #f2eee8', '--neutral: #241c2c', 'outline text / hover')]:
+            path.write_text(original.replace(old, new, 1))
+            self.error(hero.hero_contrast_errors, message)
+
+    def test_r6_outline_threshold(self):
+        self.edit('style.css', '--strong-line: #817785', '--strong-line: #ded8d2')
+        self.error(hero.hero_contrast_errors, 'outline / peak glow')
+
+    def test_r6_nonmonotone_glow(self):
+        self.edit('style.css', 'rgb(238 240 243 / 65%)', 'rgb(255 0 255 / 65%)')
+        self.error(hero.hero_contrast_errors, 'non-monotone glow')
+
+    def test_r6_css_failure(self):
+        with (self.root / 'style.css').open('a') as css:
+            css.write('.hero { content: "unterminated; }')
+        self.error(hero.hero_contrast_errors, 'Hero contrast:')
+        (self.root / 'style.css').unlink()
+        self.error(hero.hero_contrast_errors, 'Hero contrast:')
+
+    def test_r6_contrast_wiring(self):
+        self.edit('style.css', 'rgb(150 158 170 / 8%)', 'rgb(150 158 170 / 100%)')
+        self.error(v5.check, 'Hero contrast:')
+
+    def audit_copy_probe(self, fail=False):
+        before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        server = MagicMock()
+        server.poll.return_value = None
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        seen = []
+
+        def capture(command, cwd):
+            served = Path(popen.call_args.args[0][popen.call_args.args[0].index('--directory') + 1])
+            config = Path(command[command.index('--config') + 1])
+            self.assertFalse(served.is_relative_to(self.root))
+            self.assertEqual(served.parent, config.parent)
+            actual = {p.relative_to(served): p.read_bytes() for p in served.rglob('*') if p.is_file()}
+            expected = dict(before)
+            expected[Path('style.css')] += b'\n.hero::before { display: none !important; }\n'
+            self.assertEqual(actual, expected)
+            seen.append(served)
+            if fail:
+                raise RuntimeError('validator failed')
+
+        with patch.object(ci_checks.subprocess, 'Popen', return_value=server) as popen, \
+                patch.object(ci_checks, 'urlopen', return_value=response), \
+                patch.object(ci_checks, 'run', side_effect=capture):
+            if fail:
+                with self.assertRaisesRegex(RuntimeError, 'validator failed'):
+                    ci_checks.accessibility(SOURCE, self.root)
+            else:
+                ci_checks.accessibility(SOURCE, self.root)
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].exists())
+        self.assertEqual({p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+        server.terminate.assert_called_once()
+        server.wait.assert_called_once_with(timeout=10)
+
+    def test_r6_a11y_copy(self):
+        self.audit_copy_probe()
+
+    def test_r6_a11y_copy_failure_cleanup(self):
+        self.audit_copy_probe(fail=True)
 
     def test_r5_gradient_backgrounds_decorative(self):
         # Parse every stylesheet, including nested rules and background-image

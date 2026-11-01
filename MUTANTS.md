@@ -222,5 +222,32 @@ the negative decorative layer as hiding content.
 | M204 hero stacking isolation | `style.css` | `test_r5_hero_glow_stacking` |
 | M205 glow behind hero content | `style.css` | `test_r5_hero_glow_stacking` |
 | M206 decorative negative layer is not hiding | `scripts/page_visibility.py` | `test_r5_hero_glow_visibility` |
+| M207 serve audit copy | `scripts/ci_checks.py` | `test_r6_a11y_copy` |
+| M208 audit glow override | `scripts/ci_checks.py` | `test_r6_a11y_copy` |
+| M209 candidate stays untouched | `scripts/ci_checks.py` | `test_r6_a11y_copy` |
+| M210 peak alpha blend | `scripts/hero_contrast.py` | `test_r6_contrast_baseline` |
+| M211 percent alpha scale | `scripts/hero_contrast.py` | `test_r6_contrast_math` |
+| M212 contrast minimum | `scripts/hero_contrast.py` | `test_r6_stronger_glow` |
+| M213 dark contrast enforcement | `scripts/hero_contrast.py` | `test_r6_stronger_glow` |
+| M214 light contrast enforcement | `scripts/hero_contrast.py` | `test_r6_text_thresholds` |
+| M215 normal text threshold | `scripts/hero_contrast.py` | `test_r6_text_thresholds` |
+| M216 button text thresholds | `scripts/hero_contrast.py` | `test_r6_text_thresholds` |
+| M217 outline threshold | `scripts/hero_contrast.py` | `test_r6_outline_threshold` |
+| M218 colour parse fails closed | `scripts/hero_contrast.py` | `test_r6_unparsable_colours` |
+| M219 missing tokens fail closed | `scripts/hero_contrast.py` | `test_r6_missing_and_scoped_tokens` |
+| M220 decorative layer contract | `scripts/hero_contrast.py` | `test_r6_decorative_layer` |
+| M221 text paint contract | `scripts/hero_contrast.py` | `test_r6_paint_contract` |
+| M222 scoped token guard | `scripts/hero_contrast.py` | `test_r6_missing_and_scoped_tokens` |
+| M223 duplicate token guard | `scripts/hero_contrast.py` | `test_r6_missing_and_scoped_tokens` |
+| M224 colour channel ranges | `scripts/hero_contrast.py` | `test_r6_unparsable_colours` |
+| M225 sRGB linearisation | `scripts/hero_contrast.py` | `test_r6_contrast_math` |
+| M226 contrast CI wiring | `scripts/check_v5.py` | `test_r6_contrast_wiring` |
+| M227 monotone gradient proof | `scripts/hero_contrast.py` | `test_r6_nonmonotone_glow` |
 
-Expected caught/total: **206/206**. Actual execution is saved in `../test.txt`.
+Expected caught/total: **227/227**. Actual execution is saved in `../test.txt`.
+
+M207–M227 cover the temporary audit copy, its exact stylesheet override and
+candidate preservation, peak-alpha compositing, both theme thresholds, normal
+text and button states, the non-text outline, closed colour parsing, token
+scope/completeness, the decorative-layer and paint contracts, sRGB maths,
+monotone gradient bounds and CI enforcement.

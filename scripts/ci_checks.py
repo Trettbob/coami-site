@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,12 @@ def accessibility(checks, root):
     # Temp files and logs never land in the served candidate tree.
     with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR', tempfile.gettempdir())) as temp:
         temp = Path(temp)
+        audit = temp / 'candidate'
+        shutil.copytree(root, audit)
+        # axe cannot resolve backgrounds beneath this decorative pseudo-element.
+        # The independent hero contrast invariant checks the published glow.
+        with (audit / 'style.css').open('ab') as stylesheet:
+            stylesheet.write(b'\n.hero::before { display: none !important; }\n')
         config = json.loads((checks / '.pa11yci.json').read_text())
         # Use the existing reduced-motion CSS for both timed and view-timeline
         # fades; waiting alone cannot settle a partially scrolled reveal.
@@ -61,7 +68,7 @@ def accessibility(checks, root):
         config_path.write_text(json.dumps(config))
         with (temp / 'server.log').open('w') as log:
             server = subprocess.Popen([sys.executable, '-I', '-B', '-m', 'http.server',
-                                       '--bind', '127.0.0.1', '--directory', str(root), '--', '8080'],
+                                       '--bind', '127.0.0.1', '--directory', str(audit), '--', '8080'],
                                       stdout=log, stderr=log)
             try:
                 for attempt in range(50):

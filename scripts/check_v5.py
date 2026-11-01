@@ -14,6 +14,7 @@ from legal_pins import PINS, element_bytes
 from check_invariants import FOOTER
 from page_pins import page_pin_errors
 from page_visibility import page_visibility_errors
+from hero_contrast import hero_contrast_errors
 
 FEATURES_PATH = Path('legal/approved-features-copy.txt')  # trusted constant, never candidate config
 FEATURES_SHA256 = '1e70dd45e954473a3c81eb6d982757cecd2f402b0bbe906d2ac2aa03f2eaf83e'
@@ -354,7 +355,8 @@ def check(root, kind='all'):
     errors = discovery_errors(root)
     for name, checker in [('features', feature_errors), ('claims', claim_errors),
                           ('purple', purple_errors), ('motion', motion_errors),
-                          ('pages', page_pin_errors), ('visibility', page_visibility_errors)]:
+                          ('pages', page_pin_errors), ('visibility', page_visibility_errors),
+                          ('hero-contrast', hero_contrast_errors)]:
         if kind in {'all', name}:
             errors.extend(checker(root))
     return errors
@@ -362,7 +364,7 @@ def check(root, kind='all'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--check', choices=['all', 'features', 'claims', 'purple', 'motion', 'pages', 'visibility'], default='all')
+    parser.add_argument('--check', choices=['all', 'features', 'claims', 'purple', 'motion', 'pages', 'visibility', 'hero-contrast'], default='all')
     parser.add_argument('root', nargs='?', type=Path, default=ROOT)
     args = parser.parse_args()
     errors = check(args.root, args.check)
