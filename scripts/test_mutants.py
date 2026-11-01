@@ -305,6 +305,12 @@ MUTANTS = [
     ('M198 page pins CI wiring', 'check_v5.py', "('pages', page_pin_errors), ", '', 'test_r3_pages_wiring'),
     ('M199 visibility CI wiring', 'check_v5.py', ", ('visibility', page_visibility_errors)", '', 'test_r3_visibility_wiring'),
     ('M200 retain original joined-word ban', 'check_invariants.py', 'normalized(copy_text(page.root, False))', "''", 'test_r3_original_ban_split_words'),
+    ('M201 duplicate resolved landmark name', '../index.html',
+     '<section class="closing reveal">', '<section class="closing reveal" aria-labelledby="closing-h">',
+     'test_r4_landmark_names'),
+    ('M202 audit reduced motion', 'ci_checks.py',
+     ".append('--force-prefers-reduced-motion')", '.extend([])',
+     'test_r4_a11y_reduced_motion_config'),
 ]
 
 

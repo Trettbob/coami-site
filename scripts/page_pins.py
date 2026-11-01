@@ -18,7 +18,7 @@ PAGE_SHA256 = {
     'contact.html': 'c047c28a06232fc67d00df557ece820a26a24f7e8db989fd5b569f4c6a967adf',
     'features.html': '1fe64caf15792dd90d29ec1377afaa7fc27ece35d28dac22c3a3f206cfc61588',
     'how-it-works.html': '153facbc21fd7989e8eb03d048a68abe7e1239028ace707f1ace05664f56d544',
-    'index.html': '597ed2f6d32b977cf6db2e63065f96f0bbca35d796da7486895b1a42e3c5a2f2',
+    'index.html': 'b8ef814cddc21ad5c428efe0cc611f4170d7a750f4837631879fe6c784d0aef6',
     'pilot.html': 'e8b93ce758e9744ce91465ec4e0d636d19fe6bddb376309c9e98db42a7035801',
     'privacy.html': '8f5b8f32432a88b1255e25bd620a766c6ec663c0bb520a19ece49a5c79973101',
 }

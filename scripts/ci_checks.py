@@ -51,6 +51,10 @@ def accessibility(checks, root):
     with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR', tempfile.gettempdir())) as temp:
         temp = Path(temp)
         config = json.loads((checks / '.pa11yci.json').read_text())
+        # Use the existing reduced-motion CSS for both timed and view-timeline
+        # fades; waiting alone cannot settle a partially scrolled reveal.
+        config.setdefault('defaults', {}).setdefault('chromeLaunchConfig', {}).setdefault(
+            'args', []).append('--force-prefers-reduced-motion')
         config['urls'] = ['http://127.0.0.1:8080/' + quote(p.relative_to(root).as_posix())
                           for p in site_files(root) if p.suffix.lower() != '.svg']
         config_path = temp / 'pa11y.json'

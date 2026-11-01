@@ -8,6 +8,8 @@ The exact source edits live in `scripts/test_mutants.py`.
 M01–M169 are retained. M170–M200 cover whole-page pins, element boundaries,
 visibility, integration, and preservation of the original joined-word ban.
 M115 removes the shared aria-hidden copy guard for both text scans.
+M201 restores the closing section's duplicate resolved name; M202 removes
+reduced motion from the emitted accessibility config.
 
 | Mutant / check removed | File | Required regression |
 | --- | --- | --- |
@@ -211,5 +213,7 @@ M115 removes the shared aria-hidden copy guard for both text scans.
 | M198 page pins CI wiring | `scripts/check_v5.py` | `test_r3_pages_wiring` |
 | M199 visibility CI wiring | `scripts/check_v5.py` | `test_r3_visibility_wiring` |
 | M200 retain original joined-word ban | `scripts/check_invariants.py` | `test_r3_original_ban_split_words` |
+| M201 duplicate resolved landmark name | `index.html` | `test_r4_landmark_names` |
+| M202 audit reduced motion | `scripts/ci_checks.py` | `test_r4_a11y_reduced_motion_config` |
 
-Expected caught/total: **200/200**. Actual execution is saved in `../test.txt`.
+Expected caught/total: **202/202**. Actual execution is saved in `../test.txt`.

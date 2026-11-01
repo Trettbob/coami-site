@@ -58,6 +58,58 @@ class ChecksTest(unittest.TestCase):
     def error(self, checker, fragment):
         self.assertIn(fragment, '\n'.join(checker(self.root)))
 
+    def test_r4_landmark_names(self):
+        # Different IDREFs can resolve to the same accessible name.
+        for name in common.HTML_PAGES:
+            page = common.read_page(self.root / name)
+            names = {}
+            for node in page.nodes:
+                refs = node.attr.get('aria-labelledby', '').split()
+                if node.tag not in {'section', 'nav'} or not (refs or node.tag == 'nav'):
+                    continue
+                label = node.attr.get('aria-label', '')
+                if refs:
+                    labels = []
+                    for ref in refs:
+                        targets = [n for n in page.nodes if n.attr.get('id') == ref]
+                        self.assertEqual(len(targets), 1, (name, ref))
+                        labels.append(common.normalized(common.visible_text(targets[0])))
+                    label = ' '.join(labels)
+                self.assertTrue(label.strip(), (name, node.tag))
+                self.assertNotIn(label, names.setdefault(node.tag, []), (name, label))
+                names[node.tag].append(label)
+
+    def test_r4_a11y_reduced_motion_config(self):
+        # Exercise the emitted config; only browser/server execution is external.
+        trusted = json.loads((SOURCE / '.pa11yci.json').read_text())
+        server = MagicMock()
+        server.poll.return_value = None
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        seen = []
+
+        def capture(command, cwd):
+            config_path = Path(command[command.index('--config') + 1])
+            config = json.loads(config_path.read_text())
+            args = config['defaults']['chromeLaunchConfig']['args']
+            self.assertIn('--force-prefers-reduced-motion', args)
+            args.remove('--force-prefers-reduced-motion')
+            self.assertEqual(config['defaults'], trusted['defaults'])
+            self.assertEqual(set(config['urls']),
+                             {'http://127.0.0.1:8080/' + n for n in common.HTML_PAGES})
+            self.assertEqual(command[:5], ['npx', '--yes', '--package=pa11y-ci@4.0.0',
+                                          '--', 'pa11y-ci'])
+            self.assertEqual(cwd, SOURCE)
+            self.assertFalse(config_path.is_relative_to(self.root))
+            seen.append(config_path)
+
+        with patch.object(ci_checks.subprocess, 'Popen', return_value=server), \
+                patch.object(ci_checks, 'urlopen', return_value=response), \
+                patch.object(ci_checks, 'run', side_effect=capture):
+            ci_checks.accessibility(SOURCE, self.root)
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].exists())
+
     def test_r3_page_pin_baseline(self):
         self.assertEqual(page_pins.page_pin_errors(self.root), [])
         self.assertEqual(set(page_pins.PAGE_SHA256), set(common.HTML_PAGES))
@@ -1927,7 +1979,8 @@ class WorkflowTest(unittest.TestCase):
                 patch.object(ci_checks, 'urlopen', return_value=response), \
                 patch.object(ci_checks, 'run', side_effect=capture):
             ci_checks.accessibility(base, candidate)
-        self.assertEqual(seen[0][0]['defaults'], {'trusted': True})
+        self.assertEqual(seen[0][0]['defaults'], {'trusted': True, 'chromeLaunchConfig': {
+            'args': ['--force-prefers-reduced-motion']}})
         self.assertEqual(seen[0][0]['urls'], ['http://127.0.0.1:8080/index.html'])
         self.assertFalse(seen[0][1].exists())
         self.assertIn('--', popen.call_args.args[0])
