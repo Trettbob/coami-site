@@ -445,9 +445,8 @@ on all eight pages, missing/duplicate/empty fields, head pin integrity, unlisted
 meta/link elements (including social metadata), direct word and availability
 scans, joined-word scans, live-chat scope and reproducible generation.
 
-The Low finding at `scripts/hero_contrast.py:75` remains a known issue: selector
-spelling can miss a hero colour override. That file and the audit override are
-unchanged; the mandatory stylesheet SHA256 gate still rejects such CSS edits.
+Round 7 left the Low finding at `scripts/hero_contrast.py:75` unresolved;
+the Sol review fixes below now close it independently of stylesheet hashing.
 
 Current artifacts are `../test.txt`, `../tree-run.txt` and
 `../DIFF-r6-to-r7.patch` (`diff -ru ./in/base ./out` from the job folder).
@@ -461,3 +460,24 @@ candidate copy with synthetic noreply-only history in a temporary repository
 under `$TMPDIR`; publication history is unavailable. Temporary repos, copies
 and caches are deleted. No network, installs or workspace Git writes were used.
 Package/browser checks and hosted CI/protection settings remain unverified.
+
+The Sol read-only review fixes authenticate both raw Legal fragments with
+SHA256 digests in the trusted `scripts/legal_pins.py` source before either
+page comparison or fragment parsing. Candidate baseline edits cannot redefine
+approval. Coordinated `<p>` to `<p >` edits across the footer baseline and all
+eight pages, and `<h2>` to `<h2 >` edits across the privacy baseline and page,
+are rejected even though their parsed page/head pins are unchanged. Existing
+semantic/parser regression fixtures explicitly patch only the digest of their
+temporary fragment so those independent guards remain exercised.
+
+The hero proof now checks every `color` declaration against guarded paint rules
+or the exact remaining approved selector/value/context tuples. The generic
+anchor colour joins the paint contract. New selectors such as `main section p`,
+universal/attribute/pseudo selectors, selector lists and conditional overrides
+fail closed without needing a general CSS cascade engine. Existing decorative
+layer validation still applies. No rendered site asset or Legal pin changes.
+
+These fixes add three regressions and mutants M250–M252: 286 tests and an
+expected 252/252 mutants. Current results are in `../test.txt`; all seven CI
+entries, offline dependency limitations and unavailable publication history are
+recorded in `../tree-run.txt`. `../CHANGED-FILES.txt` lists this job's changes.

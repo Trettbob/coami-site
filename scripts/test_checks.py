@@ -4,6 +4,7 @@ No network, installs or browser documents are created in the repo. Git writes
 are confined to automatically removed temporary repositories under $TMPDIR.
 """
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -30,6 +31,7 @@ import allowlist
 import page_pins
 import page_visibility
 import hero_contrast as hero
+import legal_pins
 
 SOURCE = Path(__file__).resolve().parents[1]
 ASSETS = [*common.HTML_PAGES, *allowlist.IMAGE_HASHES, 'style.css',
@@ -59,6 +61,63 @@ class ChecksTest(unittest.TestCase):
 
     def error(self, checker, fragment):
         self.assertIn(fragment, '\n'.join(checker(self.root)))
+
+    def legal_fixture_digest(self, tag):
+        # Isolate semantic/parser guards below authentication. Only these
+        # deliberately invalid fixtures get a locally trusted digest.
+        raw = (self.root / legal_pins.PINS[tag]).read_bytes()
+        return patch.dict(legal_pins.PIN_SHA256, {tag: hashlib.sha256(raw).hexdigest()})
+
+    def test_sol_coordinated_footer_tampering(self):
+        pin = self.root / legal_pins.PINS['footer']
+        original = pin.read_bytes()
+        tampered = original.replace(b'<p>', b'<p >', 1)
+        self.assertNotEqual(original, tampered)
+        pin.write_bytes(tampered)
+        for name in common.HTML_PAGES:
+            path = self.root / name
+            raw = path.read_bytes()
+            self.assertIn(original, raw)
+            path.write_bytes(raw.replace(original, tampered, 1))
+        # Parsed body/head pins cannot detect this byte-only coordinated edit.
+        self.assertEqual(page_pins.page_pin_errors(self.root), [])
+        self.assertIsNone(legal_pins.pin_page(self.root, 'footer'))
+        for name in common.HTML_PAGES:
+            path = self.root / name
+            self.assertIn('Legal footer pin sha256 mismatch', '\n'.join(
+                legal_pins.pin_errors(self.root, path, common.read_page(path), 'footer')))
+            self.error(invariants.check, name + ': Legal footer pin sha256 mismatch')
+
+    def test_sol_coordinated_privacy_tampering(self):
+        pin = self.root / legal_pins.PINS['article']
+        original = pin.read_bytes()
+        tampered = original.replace(b'<h2>', b'<h2 >', 1)
+        self.assertNotEqual(original, tampered)
+        pin.write_bytes(tampered)
+        path = self.root / 'privacy.html'
+        raw = path.read_bytes()
+        self.assertIn(original, raw)
+        path.write_bytes(raw.replace(original, tampered, 1))
+        self.assertEqual(page_pins.page_pin_errors(self.root), [])
+        self.assertIsNone(legal_pins.pin_page(self.root, 'article'))
+        self.assertIn('Legal article pin sha256 mismatch', '\n'.join(
+            legal_pins.pin_errors(self.root, path, common.read_page(path), 'article')))
+        self.error(privacy.check, 'privacy.html: Legal article pin sha256 mismatch')
+
+    def test_sol_hero_colour_selectors(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for selector in ('main section p', 'section p', 'main p', 'section > div p',
+                         'p:hover', '*', 'html', 'main', '[class~="hero-description"]',
+                         ':is(p, h1)', ':where(main) p', '.wrap p', '.hero p',
+                         'main section p, .statement p', '.btn:hover', '.btn.line:hover'):
+            for context in ('{}', '@media (max-width: 600px) {{ {} }}',
+                            '@supports (display: grid) {{ {} }}'):
+                with self.subTest(selector=selector, context=context):
+                    rule = selector + ' { color: #fbf8f4; }'
+                    path.write_text(original + '\n' + context.format(rule))
+                    # Exercise the proof directly, independently of CSS hashing.
+                    self.error(hero.hero_contrast_errors, 'unsupported hero paint')
 
     def head_edit(self, name, field, value):
         path = self.root / name
@@ -1190,13 +1249,16 @@ class ChecksTest(unittest.TestCase):
 
     def test_v4_pin_semantics(self):
         self.edit('legal/approved-footer.html', '17310137', '00000000')
-        self.error(invariants.check, 'Approved footer pin: Legal footer text')
+        with self.legal_fixture_digest('footer'):
+            self.error(invariants.check, 'Approved footer pin: Legal footer text')
         self.edit('legal/approved-privacy-notice.html', 'no cookies', 'some cookies')
-        self.error(privacy.check, 'Approved privacy pin text differs from D26')
+        with self.legal_fixture_digest('article'):
+            self.error(privacy.check, 'Approved privacy pin text differs from D26')
 
     def test_v4_pin_links(self):
         self.edit('legal/approved-footer.html', 'href="privacy.html"', 'href="index.html"')
-        self.error(invariants.check, 'Approved footer pin: Legal footer links')
+        with self.legal_fixture_digest('footer'):
+            self.error(invariants.check, 'Approved footer pin: Legal footer links')
 
     def test_v4_pin_notice_links(self):
         pin = 'legal/approved-privacy-notice.html'
@@ -1204,7 +1266,8 @@ class ChecksTest(unittest.TestCase):
                                 (privacy.GITHUB_PRIVACY, 'privacy statement link href')]:
             (self.root / pin).write_bytes((SOURCE / pin).read_bytes())
             self.edit(pin, url, 'https://evil.test/')
-            self.error(privacy.check, 'Approved privacy pin: ' + diagnostic)
+            with self.legal_fixture_digest('article'):
+                self.error(privacy.check, 'Approved privacy pin: ' + diagnostic)
 
     def test_v4_missing_pins(self):
         (self.root / 'legal/approved-footer.html').unlink()
@@ -1220,17 +1283,20 @@ class ChecksTest(unittest.TestCase):
                         original.replace(b'<p>', b'<p hidden="">', 1),
                         original.replace(b'<p>', b'<p>\xff', 1)]:
                 (self.root / pin).write_bytes(raw)
-                self.assertIsNone(legal_pins.pin_page(self.root, tag))
+                with self.legal_fixture_digest(tag):
+                    self.assertIsNone(legal_pins.pin_page(self.root, tag))
             (self.root / pin).write_bytes(original)
 
     def test_v4_pin_notice_vocabulary(self):
         self.edit('legal/approved-privacy-notice.html', 'There is no sign-up here.',
                   '<svg><text>There is no sign-up here.</text></svg>')
-        self.error(privacy.check, 'Approved privacy pin: forbidden notice element')
+        with self.legal_fixture_digest('article'):
+            self.error(privacy.check, 'Approved privacy pin: forbidden notice element')
 
     def test_v4_pin_notice_visibility(self):
         self.edit('legal/approved-privacy-notice.html', 'class="legal text"', 'class="skip"')
-        self.error(privacy.check, 'Approved privacy pin: Privacy notice visibility class placement')
+        with self.legal_fixture_digest('article'):
+            self.error(privacy.check, 'Approved privacy pin: Privacy notice visibility class placement')
 
     def test_v4_banned_aria_svg(self):
         for content in ['<svg viewBox="0 0 300 100" aria-hidden="true"><text x="0" y="50">GDPR certified secure</text></svg>',

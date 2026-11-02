@@ -267,8 +267,11 @@ the negative decorative layer as hiding content.
 | M247 separated head banned-word scan | `scripts/check_invariants.py` | `test_r7_head_separated_ban` |
 | M248 separated head availability scan | `scripts/check_v5.py` | `test_r7_head_separated_availability` |
 | M249 head generator fails closed | `scripts/generate_page_pins.py` | `test_r7_head_generator` |
+| M250 authenticated footer baseline | `scripts/legal_pins.py` | `test_sol_coordinated_footer_tampering` |
+| M251 authenticated privacy baseline | `scripts/legal_pins.py` | `test_sol_coordinated_privacy_tampering` |
+| M252 hero colour selector guard | `scripts/hero_contrast.py` | `test_sol_hero_colour_selectors` |
 
-Expected caught/total: **249/249**. Actual execution is saved in `../test.txt`.
+Expected caught/total: **252/252**. Actual execution is saved in `../test.txt`.
 
 M207–M227 cover the temporary audit copy, its exact stylesheet override and
 candidate preservation, peak-alpha compositing, both theme thresholds, normal
@@ -281,3 +284,10 @@ M228–M249 cover head pin integrity and exact values, unique and non-empty
 titles/descriptions, the fixed meta/link allowlist, per-page enforcement,
 metadata generation, both claim scanners and their joined-text scans, and the
 restriction of live chat to approved Features body items.
+
+M250–M252 cover coordinated byte-only edits to both Legal baselines and their
+pages, and unguarded colour rules with tag, ancestor, universal, attribute,
+functional-pseudo, grouped and button-state selectors, including at-rule scopes.
+Semantic/parser Legal fixtures explicitly trust only their temporary test
+digest, keeping those older guards independently mutation-tested after adding
+baseline authentication. Production digests and Legal files remain fixed.

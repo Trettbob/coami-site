@@ -189,7 +189,7 @@ MUTANTS = [
     ('M100 font and licence hashes', 'site_common.py', 'if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:', 'if False:', 'test_v4_font_hash'),
     ('M101 woff2 magic bytes', 'site_common.py', "if name.endswith('.woff2') and (not path.is_file() or path.read_bytes()[:4] != b'wOF2'):", 'if False:', 'test_v4_font_magic'),
     ('M102 CSS font origin and resource guard', 'check_no_third_party.py', "if re.search(r'url\\s*\\(|(?:-webkit-)?image-set\\s*\\(|@import\\b|@font-face\\b', css, re.I):", 'if False:', 'test_v4_font_face_origin'),
-    ('M103 exact Legal bytes', 'legal_pins.py', 'chunks[0] != pin.read_bytes()', 'False', 'test_v4_legal_bytes'),
+    ('M103 exact Legal bytes', 'legal_pins.py', 'chunks[0] != raw', 'False', 'test_v4_legal_bytes'),
     ('M104 Legal element cardinality', 'legal_pins.py', 'len(elements) != 1 or len(chunks) != 1', 'False', 'test_v4_second_legal_element'),
     ('M105 footer byte pin wiring', 'check_invariants.py', "errors.extend(pin_errors(root, path, page, 'footer'))", 'pass', 'test_v4_footer_svg'),
     ('M106 privacy byte pin wiring', 'check_privacy_text.py', "errors.extend(pin_errors(root, path, page, 'article'))", 'pass', 'test_v4_notice_svg'),
@@ -365,6 +365,17 @@ MUTANTS = [
     ('M247 separated head banned-word scan', 'check_invariants.py', 'public_copy.extend([separated_text(node), joined_text(node)])', 'public_copy.extend([joined_text(node)])', 'test_r7_head_separated_ban'),
     ('M248 separated head availability scan', 'check_v5.py', 'values = [normalized(text(page.root)), normalized(text(page.root, False))]', 'values = [normalized(text(page.root, False))]', 'test_r7_head_separated_availability'),
     ('M249 head generator fails closed', 'generate_page_pins.py', 'if page.errors or head_errors(page):', 'if page.errors:', 'test_r7_head_generator'),
+    ('M250 authenticated footer baseline', 'legal_pins.py',
+     'if hashlib.sha256(raw).hexdigest() != PIN_SHA256[tag]:',
+     "if tag != 'footer' and hashlib.sha256(raw).hexdigest() != PIN_SHA256[tag]:",
+     'test_sol_coordinated_footer_tampering'),
+    ('M251 authenticated privacy baseline', 'legal_pins.py',
+     'if hashlib.sha256(raw).hexdigest() != PIN_SHA256[tag]:',
+     "if tag != 'article' and hashlib.sha256(raw).hexdigest() != PIN_SHA256[tag]:",
+     'test_sol_coordinated_privacy_tampering'),
+    ('M252 hero colour selector guard', 'hero_contrast.py',
+     "if colours and 'color' not in PAINT.get(selector, {}) and (selectors, colours, context) not in OTHER_COLOURS:",
+     'if False:', 'test_sol_hero_colour_selectors'),
 ]
 
 

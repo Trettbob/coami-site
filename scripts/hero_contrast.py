@@ -17,6 +17,7 @@ DECORATION = {
 # Colour references must still describe the text/surfaces actually being proved.
 PAINT = {
     'body': {'background': 'var(--paper)', 'color': 'var(--ink)'},
+    'a': {'color': 'var(--link)'},
     'h1, h2, h3': {'color': 'var(--ink)'},
     'p': {'color': 'var(--soft)'},
     '.btn': {'color': 'var(--primary-text)', 'background': 'var(--primary)',
@@ -24,6 +25,23 @@ PAINT = {
     '.btn:hover': {'background': 'var(--primary-hover)', 'border-color': 'var(--primary-hover)'},
     '.btn.line': {'color': 'var(--ink)', 'background': 'transparent', 'border-color': 'var(--strong-line)'},
     '.btn.line:hover': {'background': 'var(--neutral)', 'border-color': 'var(--ink)'},
+}
+# Remaining approved colour rules. Freeze their selector, value and context:
+# arbitrary CSS selector matching is outside this bounded proof. These rules
+# style non-hero text or the empty decorative enso in the pinned page skeleton.
+# All other colour declarations must go through PAINT, even when their selector
+# does not mention hero (for example, `main section p` or `*`).
+OTHER_COLOURS = {
+    (('.skip',), (('color', 'var(--link)'),), ()),
+    (('.enso',), (('color', '#7a4fa0'),), ()),
+    (('.enso',), (('color', '#c9a6ec'),), DARK),
+    (('.icon-tile',), (('color', 'var(--ink)'),), ()),
+    (('.step-number',), (('color', 'var(--soft)'),), ()),
+    (('.statement p',), (('color', 'var(--ink)'),), ()),
+    (('.plain',), (('color', 'var(--soft)'),), ()),
+    (('.copy-slot',), (('color', 'var(--soft)'),), ()),
+    (('.status-pilot',), (('color', 'var(--ink)'),), ()),
+    (('.status-planned',), (('color', 'var(--soft)'),), ()),
 }
 
 
@@ -68,6 +86,9 @@ def hero_contrast_report(root):
         if any('hero' in s and ('::before' in s or ':before' in s) for s in selectors):
             decorations.append((selectors, declarations, context))
             continue
+        colours = tuple((p, v) for p, v in declarations if p == 'color')
+        if colours and 'color' not in PAINT.get(selector, {}) and (selectors, colours, context) not in OTHER_COLOURS:
+            raise ValueError('unsupported hero paint colour rule: ' + selector)
         if selector in PAINT and any(p in PAINT[selector] for p, _ in declarations):
             if context or selector in paints:
                 raise ValueError('unsupported hero paint override: ' + selector)
