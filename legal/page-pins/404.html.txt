@@ -1,0 +1,39 @@
+{"path":"html[1]/body[1]","tag":"body","classes":[],"attributes":[],"content":["\n",{"element":"html[1]/body[1]/a[1]"},"\n",{"element":"html[1]/body[1]/header[1]"},"\n",{"element":"html[1]/body[1]/main[1]"},"\n",{"element":"html[1]/body[1]/div[1]"},"\n\n\n"]}
+{"path":"html[1]/body[1]/a[1]","tag":"a","classes":["skip"],"attributes":[["href","#main"]],"content":["Skip to content"]}
+{"path":"html[1]/body[1]/header[1]","tag":"header","classes":["site"],"attributes":[],"content":[{"element":"html[1]/body[1]/header[1]/div[1]"}]}
+{"path":"html[1]/body[1]/header[1]/div[1]","tag":"div","classes":["bar"],"attributes":[],"content":["\n",{"element":"html[1]/body[1]/header[1]/div[1]/a[1]"},"\n",{"element":"html[1]/body[1]/header[1]/div[1]/nav[1]"},"\n",{"element":"html[1]/body[1]/header[1]/div[1]/a[2]"},"\n"]}
+{"path":"html[1]/body[1]/header[1]/div[1]/a[1]","tag":"a","classes":["brand"],"attributes":[["aria-label","CoAmi home"],["href","index.html"]],"content":[{"element":"html[1]/body[1]/header[1]/div[1]/a[1]/img[1]"},{"element":"html[1]/body[1]/header[1]/div[1]/a[1]/img[2]"}]}
+{"path":"html[1]/body[1]/header[1]/div[1]/a[1]/img[1]","tag":"img","classes":["brand-light"],"attributes":[["alt","CoAmi"],["src","img/coami-logo.svg"]],"content":[]}
+{"path":"html[1]/body[1]/header[1]/div[1]/a[1]/img[2]","tag":"img","classes":["brand-dark"],"attributes":[["alt","CoAmi"],["src","img/coami-logo-light-on-dark.svg"]],"content":[]}
+{"path":"html[1]/body[1]/header[1]/div[1]/nav[1]","tag":"nav","classes":[],"attributes":[["aria-label","Main"]],"content":[{"element":"html[1]/body[1]/header[1]/div[1]/nav[1]/a[1]"},{"element":"html[1]/body[1]/header[1]/div[1]/nav[1]/a[2]"},{"element":"html[1]/body[1]/header[1]/div[1]/nav[1]/a[3]"},{"element":"html[1]/body[1]/header[1]/div[1]/nav[1]/a[4]"}]}
+{"path":"html[1]/body[1]/header[1]/div[1]/nav[1]/a[1]","tag":"a","classes":[],"attributes":[["href","features.html"]],"content":["Features"]}
+{"path":"html[1]/body[1]/header[1]/div[1]/nav[1]/a[2]","tag":"a","classes":[],"attributes":[["href","how-it-works.html"]],"content":["How it works"]}
+{"path":"html[1]/body[1]/header[1]/div[1]/nav[1]/a[3]","tag":"a","classes":[],"attributes":[["href","pilot.html"]],"content":["Pilot"]}
+{"path":"html[1]/body[1]/header[1]/div[1]/nav[1]/a[4]","tag":"a","classes":[],"attributes":[["href","about.html"]],"content":["About"]}
+{"path":"html[1]/body[1]/header[1]/div[1]/a[2]","tag":"a","classes":["btn"],"attributes":[["href","mailto:hello@coami.ai?subject=CoAmi%20pilot"]],"content":["Register interest"]}
+{"path":"html[1]/body[1]/main[1]","tag":"main","classes":[],"attributes":[["id","main"],["tabindex","-1"]],"content":["\n",{"element":"html[1]/body[1]/main[1]/section[1]"},"\n"]}
+{"path":"html[1]/body[1]/main[1]/section[1]","tag":"section","classes":["page-intro","not-found"],"attributes":[["aria-labelledby","missing-h"]],"content":[{"element":"html[1]/body[1]/main[1]/section[1]/div[1]"}]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]","tag":"div","classes":["wrap"],"attributes":[],"content":[{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]"}]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]","tag":"div","classes":["section-intro"],"attributes":[],"content":[{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/span[1]"},{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/h1[1]"},{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/p[1]"},{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/p[2]"}]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/span[1]","tag":"span","classes":["icon-tile"],"attributes":[],"content":[{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/span[1]/svg[1]"}]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/span[1]/svg[1]","tag":"svg","classes":["line-icon"],"attributes":[["aria-hidden","true"],["focusable","false"],["viewbox","0 0 24 24"]],"content":[{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/span[1]/svg[1]/circle[1]"},{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/span[1]/svg[1]/path[1]"}]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/span[1]/svg[1]/circle[1]","tag":"circle","classes":[],"attributes":[["cx","12"],["cy","12"],["r","9"]],"content":[]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/span[1]/svg[1]/path[1]","tag":"path","classes":[],"attributes":[["d","m16 8-2 6-6 2 2-6Z"]],"content":[]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/h1[1]","tag":"h1","classes":[],"attributes":[["id","missing-h"]],"content":["Page not found"]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/p[1]","tag":"p","classes":[],"attributes":[],"content":["There's nothing at this address."]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/p[2]","tag":"p","classes":["return-link"],"attributes":[],"content":[{"element":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/p[2]/a[1]"}]}
+{"path":"html[1]/body[1]/main[1]/section[1]/div[1]/div[1]/p[2]/a[1]","tag":"a","classes":[],"attributes":[["href","index.html"]],"content":["Go to the CoAmi home page"]}
+{"path":"html[1]/body[1]/div[1]","tag":"div","classes":["footer-band"],"attributes":[],"content":["\n",{"element":"html[1]/body[1]/div[1]/div[1]"},"\n",{"element":"html[1]/body[1]/div[1]/footer[1]"},"\n"]}
+{"path":"html[1]/body[1]/div[1]/div[1]","tag":"div","classes":["wrap","footer-top"],"attributes":[],"content":[{"element":"html[1]/body[1]/div[1]/div[1]/a[1]"},{"element":"html[1]/body[1]/div[1]/div[1]/nav[1]"}]}
+{"path":"html[1]/body[1]/div[1]/div[1]/a[1]","tag":"a","classes":["brand"],"attributes":[["aria-label","CoAmi home"],["href","index.html"]],"content":[{"element":"html[1]/body[1]/div[1]/div[1]/a[1]/img[1]"},{"element":"html[1]/body[1]/div[1]/div[1]/a[1]/img[2]"}]}
+{"path":"html[1]/body[1]/div[1]/div[1]/a[1]/img[1]","tag":"img","classes":["brand-light"],"attributes":[["alt","CoAmi"],["src","img/coami-logo.svg"]],"content":[]}
+{"path":"html[1]/body[1]/div[1]/div[1]/a[1]/img[2]","tag":"img","classes":["brand-dark"],"attributes":[["alt","CoAmi"],["src","img/coami-logo-light-on-dark.svg"]],"content":[]}
+{"path":"html[1]/body[1]/div[1]/div[1]/nav[1]","tag":"nav","classes":[],"attributes":[["aria-label","Footer"]],"content":[{"element":"html[1]/body[1]/div[1]/div[1]/nav[1]/a[1]"},{"element":"html[1]/body[1]/div[1]/div[1]/nav[1]/a[2]"},{"element":"html[1]/body[1]/div[1]/div[1]/nav[1]/a[3]"}]}
+{"path":"html[1]/body[1]/div[1]/div[1]/nav[1]/a[1]","tag":"a","classes":[],"attributes":[["href","index.html"]],"content":["Home"]}
+{"path":"html[1]/body[1]/div[1]/div[1]/nav[1]/a[2]","tag":"a","classes":[],"attributes":[["href","contact.html"]],"content":["Contact"]}
+{"path":"html[1]/body[1]/div[1]/div[1]/nav[1]/a[3]","tag":"a","classes":[],"attributes":[["href","privacy.html"]],"content":["Privacy"]}
+{"path":"html[1]/body[1]/div[1]/footer[1]","tag":"footer","classes":["site"],"attributes":[],"content":[{"element":"html[1]/body[1]/div[1]/footer[1]/div[1]"}]}
+{"path":"html[1]/body[1]/div[1]/footer[1]/div[1]","tag":"div","classes":["wrap"],"attributes":[],"content":["\n",{"element":"html[1]/body[1]/div[1]/footer[1]/div[1]/p[1]"},"\n"]}
+{"path":"html[1]/body[1]/div[1]/footer[1]/div[1]/p[1]","tag":"p","classes":[],"attributes":[],"content":["Trett Labs Limited. Registered in England and Wales, company number 17310137. Registered office: The 1812 Building, Wheatley Park, Mirfield, West Yorkshire, WF14 8HE. ",{"element":"html[1]/body[1]/div[1]/footer[1]/div[1]/p[1]/a[1]"}," · ICO registration ZC276667 · ",{"element":"html[1]/body[1]/div[1]/footer[1]/div[1]/p[1]/a[2]"}]}
+{"path":"html[1]/body[1]/div[1]/footer[1]/div[1]/p[1]/a[1]","tag":"a","classes":[],"attributes":[["href","mailto:hello@coami.ai"]],"content":["hello@coami.ai"]}
+{"path":"html[1]/body[1]/div[1]/footer[1]/div[1]/p[1]/a[2]","tag":"a","classes":[],"attributes":[["href","privacy.html"]],"content":["Privacy"]}

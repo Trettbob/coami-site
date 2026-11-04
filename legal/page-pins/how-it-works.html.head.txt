@@ -1,0 +1,1 @@
+{"title":"How it works | CoAmi","description":"We're building CoAmi: a place to plan a software project with Ami, an AI assistant, and build it one approved step at a time."}

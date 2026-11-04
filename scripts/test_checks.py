@@ -1,0 +1,2444 @@
+"""Offline regressions. Fixture data lives in Python; probes only in $TMPDIR.
+
+No network, installs or browser documents are created in the repo. Git writes
+are confined to automatically removed temporary repositories under $TMPDIR.
+"""
+import contextlib
+import hashlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from xml.etree import ElementTree as ET
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import check_authors as authors
+import check_invariants as invariants
+import check_links as links
+import check_no_third_party as resources
+import check_privacy_text as privacy
+import check_v5 as v5
+import ci_checks
+import site_common as common
+import legal_visibility as visibility
+import allowlist
+import page_pins
+import page_visibility
+import hero_contrast as hero
+import legal_pins
+
+SOURCE = Path(__file__).resolve().parents[1]
+ASSETS = [*common.HTML_PAGES, *allowlist.IMAGE_HASHES, 'style.css',
+          'CNAME', '.nojekyll', str(privacy.D26_PATH), *common.FONT_HASHES, *common.LEGAL_PINS, 'legal/approved-features-copy.txt',
+          *('legal/page-pins/' + name + suffix for name in common.HTML_PAGES
+            for suffix in ('.txt', '.head.txt'))]
+
+
+class ChecksTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR', tempfile.gettempdir()))
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for name in ASSETS:
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(SOURCE / name, target)
+
+    def edit(self, name, old, new):
+        p = self.root / name
+        text = p.read_text()
+        self.assertIn(old, text)
+        p.write_text(text.replace(old, new, 1))
+
+    def body(self, value, name='index.html'):
+        self.edit(name, '</body>', value + '</body>')
+
+    def error(self, checker, fragment):
+        self.assertIn(fragment, '\n'.join(checker(self.root)))
+
+    def legal_fixture_digest(self, tag):
+        # Isolate semantic/parser guards below authentication. Only these
+        # deliberately invalid fixtures get a locally trusted digest.
+        raw = (self.root / legal_pins.PINS[tag]).read_bytes()
+        return patch.dict(legal_pins.PIN_SHA256, {tag: hashlib.sha256(raw).hexdigest()})
+
+    def test_sol_coordinated_footer_tampering(self):
+        pin = self.root / legal_pins.PINS['footer']
+        original = pin.read_bytes()
+        tampered = original.replace(b'<p>', b'<p >', 1)
+        self.assertNotEqual(original, tampered)
+        pin.write_bytes(tampered)
+        for name in common.HTML_PAGES:
+            path = self.root / name
+            raw = path.read_bytes()
+            self.assertIn(original, raw)
+            path.write_bytes(raw.replace(original, tampered, 1))
+        # Parsed body/head pins cannot detect this byte-only coordinated edit.
+        self.assertEqual(page_pins.page_pin_errors(self.root), [])
+        self.assertIsNone(legal_pins.pin_page(self.root, 'footer'))
+        for name in common.HTML_PAGES:
+            path = self.root / name
+            self.assertIn('Legal footer pin sha256 mismatch', '\n'.join(
+                legal_pins.pin_errors(self.root, path, common.read_page(path), 'footer')))
+            self.error(invariants.check, name + ': Legal footer pin sha256 mismatch')
+
+    def test_sol_coordinated_privacy_tampering(self):
+        pin = self.root / legal_pins.PINS['article']
+        original = pin.read_bytes()
+        tampered = original.replace(b'<h2>', b'<h2 >', 1)
+        self.assertNotEqual(original, tampered)
+        pin.write_bytes(tampered)
+        path = self.root / 'privacy.html'
+        raw = path.read_bytes()
+        self.assertIn(original, raw)
+        path.write_bytes(raw.replace(original, tampered, 1))
+        self.assertEqual(page_pins.page_pin_errors(self.root), [])
+        self.assertIsNone(legal_pins.pin_page(self.root, 'article'))
+        self.assertIn('Legal article pin sha256 mismatch', '\n'.join(
+            legal_pins.pin_errors(self.root, path, common.read_page(path), 'article')))
+        self.error(privacy.check, 'privacy.html: Legal article pin sha256 mismatch')
+
+    def test_sol_hero_colour_selectors(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for selector in ('main section p', 'section p', 'main p', 'section > div p',
+                         'p:hover', '*', 'html', 'main', '[class~="hero-description"]',
+                         ':is(p, h1)', ':where(main) p', '.wrap p', '.hero p',
+                         'main section p, .statement p', '.btn:hover', '.btn.line:hover'):
+            for context in ('{}', '@media (max-width: 600px) {{ {} }}',
+                            '@supports (display: grid) {{ {} }}'):
+                with self.subTest(selector=selector, context=context):
+                    rule = selector + ' { color: #fbf8f4; }'
+                    path.write_text(original + '\n' + context.format(rule))
+                    # Exercise the proof directly, independently of CSS hashing.
+                    self.error(hero.hero_contrast_errors, 'unsupported hero paint')
+
+    def head_edit(self, name, field, value):
+        path = self.root / name
+        original = (SOURCE / name).read_text()
+        page = common.read_page(SOURCE / name)
+        node = next(n for n in page_pins.head_nodes(page) if
+                    (n.tag == 'title' if field == 'title' else
+                     n.tag == 'meta' and n.attr.get('name') == 'description'))
+        replacement = ('<title>' + value + '</title>' if field == 'title' else
+                       '<meta name="description" content="' + value + '">')
+        # title.raw is only the start tag; take its complete text-only element.
+        old = ('<title>' + page_pins.head_record(page)['title'] + '</title>'
+               if field == 'title' else node.raw)
+        path.write_text(original.replace(old, replacement, 1))
+
+    def test_r7_head_baseline(self):
+        self.assertEqual(page_pins.page_pin_errors(self.root), [])
+        self.assertEqual(set(page_pins.HEAD_SHA256), set(common.HTML_PAGES))
+        for name in common.HTML_PAGES:
+            page = common.read_page(self.root / name)
+            self.assertEqual(page_pins.head_errors(page), [])
+            self.assertEqual(page_pins.head_bytes(page),
+                             (self.root / 'legal/page-pins' / (name + '.head.txt')).read_bytes())
+
+    def test_r7_title_every_page(self):
+        for name in common.HTML_PAGES:
+            for value in ('Every feature is in the private pilot', 'Different neutral title'):
+                with self.subTest(page=name, value=value):
+                    self.head_edit(name, 'title', value)
+                    self.error(page_pins.page_pin_errors, name + ': public head text differs')
+
+    def test_r7_description_every_page(self):
+        for name in common.HTML_PAGES:
+            for value in ('Every feature is in the private pilot', 'Different neutral description'):
+                with self.subTest(page=name, value=value):
+                    self.head_edit(name, 'description', value)
+                    self.error(page_pins.page_pin_errors, name + ': public head text differs')
+
+    def test_r7_head_cardinality(self):
+        # Test the structural guard independently of the exact-text pin.
+        for name in common.HTML_PAGES:
+            source = (SOURCE / name).read_text()
+            for field in ('title', 'description'):
+                page = common.read_page(SOURCE / name)
+                node = next(n for n in page_pins.head_nodes(page) if
+                            (n.tag == 'title' if field == 'title' else
+                             n.tag == 'meta' and n.attr.get('name') == 'description'))
+                element = ('<title>' + page_pins.head_record(page)['title'] + '</title>'
+                           if field == 'title' else node.raw)
+                for replacement in ('', element + element):
+                    page = common.Page(source.replace(element, replacement, 1))
+                    self.assertIn('head requires exactly one ' + field, page_pins.head_errors(page))
+                    (self.root / name).write_text(source.replace(element, replacement, 1))
+                    self.error(page_pins.page_pin_errors, name + ': head requires exactly one ' + field)
+            (self.root / name).write_text(source)
+
+    def test_r7_empty_head(self):
+        for name in common.HTML_PAGES:
+            for field in ('title', 'description'):
+                for value in ('', '   '):
+                    self.head_edit(name, field, value)
+                    self.assertIn('head ' + field + ' must be non-empty',
+                                  page_pins.head_errors(common.read_page(self.root / name)))
+
+    def test_r7_head_meta_allowlist(self):
+        for name in common.HTML_PAGES:
+            for meta in ('<meta name="keywords" content="All features in the private pilot">',
+                         '<meta name="og:title" content="Other title">',
+                         '<meta property="og:description" content="Other description">',
+                         '<meta name="twitter:description" content="Other description">',
+                         '<meta name="robots" content="noindex">',
+                         '<meta name="viewport" content="width=device-width, initial-scale=1">'):
+                (self.root / name).write_text((SOURCE / name).read_text().replace('</head>', meta + '</head>'))
+                self.error(page_pins.page_pin_errors, name + ': head elements/attributes differ from allowlist')
+            (self.root / name).write_text((SOURCE / name).read_text())
+
+    def test_r7_head_link_allowlist(self):
+        for name in common.HTML_PAGES:
+            self.edit(name, '</head>', '<link rel="canonical" href="index.html"></head>')
+            self.error(page_pins.page_pin_errors, name + ': head elements/attributes differ from allowlist')
+
+    def test_r7_head_pin_integrity(self):
+        for name in common.HTML_PAGES:
+            path = self.root / 'legal/page-pins' / (name + '.head.txt')
+            original = path.read_bytes()
+            for data in (original + b'\n', b'{}\n', None):
+                if data is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(data)
+                self.error(page_pins.page_pin_errors, name + ': head pin sha256 mismatch or missing')
+                path.write_bytes(original)
+
+    def test_r7_head_banned_words(self):
+        # Check the scanner directly, independently of pin comparisons.
+        for name in common.HTML_PAGES:
+            for field in ('title', 'description'):
+                for value in ('MFA', '2FA', 'Certified secure GDPR compliant', '100 users'):
+                    self.head_edit(name, field, value)
+                    self.error(invariants.check, name + ': banned public metadata/attribute copy')
+            (self.root / name).write_text((SOURCE / name).read_text())
+
+    def test_r7_head_availability_title(self):
+        for name in common.HTML_PAGES:
+            for value in ('available now', 'working preview', 'live chat', 'guaranteed'):
+                self.head_edit(name, 'title', value)
+                self.error(v5.claim_errors, name + ': banned claim word')
+            (self.root / name).write_text((SOURCE / name).read_text())
+
+    def test_r7_head_availability_description(self):
+        for name in common.HTML_PAGES:
+            for value in ('available now', 'working preview', 'live chat', 'guaranteed'):
+                self.head_edit(name, 'description', value)
+                self.error(v5.claim_errors, name + ': banned claim word')
+            (self.root / name).write_text((SOURCE / name).read_text())
+
+    def test_r7_head_joined_ban(self):
+        # Invalid inline title markup must also yield the scanner's own ban,
+        # rather than relying on tokenizer or pin rejection to hide a gap.
+        self.head_edit('index.html', 'title', 'M<span>FA</span>')
+        self.error(invariants.check, 'index.html: banned public metadata/attribute copy')
+
+    def test_r7_head_separated_ban(self):
+        self.head_edit('index.html', 'title', '<span>100</span><span>users</span>')
+        self.error(invariants.check, 'index.html: banned public metadata/attribute copy')
+
+    def test_r7_head_separated_availability(self):
+        self.head_edit('index.html', 'title', '<span>available</span><span>now</span>')
+        self.error(v5.claim_errors, "index.html: banned claim word: 'available now'")
+
+    def test_r7_head_joined_availability(self):
+        self.head_edit('index.html', 'title', 'se<span>cure</span>')
+        self.error(v5.claim_errors, "index.html: banned claim word: 'secure'")
+
+    def test_r7_head_live_chat_scope(self):
+        self.assertEqual(v5.claim_errors(self.root), [])
+        for field in ('title', 'description'):
+            self.head_edit('features.html', field, 'live chat')
+            self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r7_head_generator(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR', tempfile.gettempdir())) as temp:
+            result = subprocess.run([sys.executable, '-I', '-B', str(SOURCE / 'scripts/generate_page_pins.py'),
+                                     '--source', str(self.root), '--destination', temp],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(len(list(Path(temp).iterdir())), 16)
+            for pin in (self.root / 'legal/page-pins').iterdir():
+                self.assertTrue((Path(temp) / pin.name).is_file(), pin.name)
+                self.assertEqual(pin.read_bytes(), (Path(temp) / pin.name).read_bytes())
+            path = self.root / 'index.html'
+            page = common.read_page(path)
+            path.write_text(path.read_text().replace('<title>' + page_pins.head_record(page)['title'] + '</title>', ''))
+            result = subprocess.run([sys.executable, '-I', '-B', str(SOURCE / 'scripts/generate_page_pins.py'),
+                                     '--source', str(self.root), '--destination', temp],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('head requires exactly one title', result.stderr)
+
+    def test_r6_contrast_baseline(self):
+        self.assertEqual(hero.hero_contrast_errors(self.root), [])
+        report = hero.hero_contrast_report(self.root)
+        expected = {
+            'light': ((242.55, 242.8, 243.35), (14.786630, 5.992412, 3.846526, 16.438550, 12.736615, 14.223653)),
+            'dark': ((30.4, 29.2, 33.84), (14.454961, 8.387435, 6.155360, 14.223653, 12.162296, 13.036719)),
+        }
+        for theme, (rgb, ratios) in expected.items():
+            for actual, want in zip(report[theme]['peak_rgb'], rgb):
+                self.assertAlmostEqual(actual, want, places=6)
+            self.assertEqual(len(report[theme]['ratios']), len(ratios))
+            for actual, want in zip(report[theme]['ratios'].values(), ratios):
+                self.assertAlmostEqual(actual, want, places=6)
+
+    def test_r6_contrast_math(self):
+        self.assertEqual(hero.contrast((0, 0, 0), (1, 1, 1)), 21)
+        self.assertAlmostEqual(hero.luminance((0.04, 0.04, 0.04)), 0.04 / 12.92)
+        self.assertAlmostEqual(hero.luminance((0.5, 0.5, 0.5)), 0.21404114048223255)
+        self.assertEqual(hero.colour('rgb(150 158 170 / 8%)', True),
+                         ((150/255, 158/255, 170/255), 0.08))
+
+    def test_r6_stronger_glow(self):
+        self.edit('style.css', 'rgb(150 158 170 / 8%)', 'rgb(150 158 170 / 100%)')
+        self.error(hero.hero_contrast_errors, 'dark:')
+        self.error(hero.hero_contrast_errors, 'contrast')
+
+    def test_r6_unparsable_colours(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for old in ('rgb(238 240 243 / 65%)', 'rgb(150 158 170 / 8%)',
+                    '#fbf8f4', '#141216', '#241c2c', '#bdb5c1'):
+            for bad in ('var(--unknown)', 'rgb(bad)', '#gggggg', 'color(display-p3 1 0 0)'):
+                path.write_text(original.replace(old, bad, 1))
+                self.error(hero.hero_contrast_errors, 'unparsable colour/token')
+        for value in ('rgb(256 0 0 / 8%)', 'rgb(150 158 170 / 101%)'):
+            path.write_text(original.replace('rgb(150 158 170 / 8%)', value))
+            self.error(hero.hero_contrast_errors, 'unparsable colour/token')
+
+    def test_r6_missing_and_scoped_tokens(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for token in sorted(hero.TOKENS):
+            import re
+            path.write_text(re.sub(re.escape(token) + r':[^;]+;', '', original, count=1))
+            self.error(hero.hero_contrast_errors, 'missing hero token')
+        for rule, message in [(':root { --glow: rgb(1 2 3 / 4%); }', 'duplicate hero token'),
+                              ('.hero { --ink: #ffffff; }', 'unsupported hero token scope'),
+                              ('@media (max-width: 1px) { :root { --soft: #ffffff; } }', 'unsupported hero token scope')]:
+            path.write_text(original + rule)
+            self.error(hero.hero_contrast_errors, message)
+
+    def test_r6_decorative_layer(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for old, new in [('content: ""', 'content: "text"'), ('content: ""', 'content: attr(title)'),
+                         ('pointer-events: none', 'pointer-events: auto'),
+                         ('z-index: -1', 'z-index: 0'), ('position: absolute; inset: 0;', 'position: fixed;'),
+                         ('content: "";', 'content: ""; color: red;'),
+                         ('.hero::before', '.hero:before'),
+                         ('var(--glow), transparent', 'var(--glow), white')]:
+            path.write_text(original.replace(old, new, 1))
+            self.error(hero.hero_contrast_errors, 'empty decorative layer')
+        path.write_text(original + '.hero::before { content: "text"; }')
+        self.error(hero.hero_contrast_errors, 'empty decorative layer')
+
+    def test_r6_paint_contract(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for old, new in [('color: var(--primary-text)', 'color: var(--soft)'),
+                         ('p { color: var(--soft); }', 'p { color: #999999; }'),
+                         ('.btn.line { color: var(--ink)', '.btn.line { color: var(--soft)')]:
+            path.write_text(original.replace(old, new, 1))
+            self.error(hero.hero_contrast_errors, 'colour references changed')
+        for rule in ('.hero-description { color: #999999; }',
+                     '@media (max-width: 600px) { .btn { color: #999999; } }'):
+            path.write_text(original + rule)
+            self.error(hero.hero_contrast_errors, 'unsupported hero paint')
+
+    def test_r6_text_thresholds(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        # Each small-text role fails independently, including 3--4.5:1 colours.
+        for old, new, message in [('--soft: #625969', '--soft: #817785', 'soft / peak glow'),
+                                  ('--ink: #241c2c', '--ink: #817785', 'ink / peak glow'),
+                                  ('--primary-text: #ffffff', '--primary-text: #625969', 'primary text / fill'),
+                                  ('--primary-hover: #382f40', '--primary-hover: #ffffff', 'primary text / hover'),
+                                  ('--neutral: #f2eee8', '--neutral: #241c2c', 'outline text / hover')]:
+            path.write_text(original.replace(old, new, 1))
+            self.error(hero.hero_contrast_errors, message)
+
+    def test_r6_outline_threshold(self):
+        self.edit('style.css', '--strong-line: #817785', '--strong-line: #ded8d2')
+        self.error(hero.hero_contrast_errors, 'outline / peak glow')
+
+    def test_r6_nonmonotone_glow(self):
+        self.edit('style.css', 'rgb(238 240 243 / 65%)', 'rgb(255 0 255 / 65%)')
+        self.error(hero.hero_contrast_errors, 'non-monotone glow')
+
+    def test_r6_css_failure(self):
+        with (self.root / 'style.css').open('a') as css:
+            css.write('.hero { content: "unterminated; }')
+        self.error(hero.hero_contrast_errors, 'Hero contrast:')
+        (self.root / 'style.css').unlink()
+        self.error(hero.hero_contrast_errors, 'Hero contrast:')
+
+    def test_r6_contrast_wiring(self):
+        self.edit('style.css', 'rgb(150 158 170 / 8%)', 'rgb(150 158 170 / 100%)')
+        self.error(v5.check, 'Hero contrast:')
+
+    def audit_copy_probe(self, fail=False):
+        before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        server = MagicMock()
+        server.poll.return_value = None
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        seen = []
+
+        def capture(command, cwd):
+            served = Path(popen.call_args.args[0][popen.call_args.args[0].index('--directory') + 1])
+            config = Path(command[command.index('--config') + 1])
+            self.assertFalse(served.is_relative_to(self.root))
+            self.assertEqual(served.parent, config.parent)
+            actual = {p.relative_to(served): p.read_bytes() for p in served.rglob('*') if p.is_file()}
+            expected = dict(before)
+            expected[Path('style.css')] += b'\n.hero::before { display: none !important; }\n'
+            self.assertEqual(actual, expected)
+            seen.append(served)
+            if fail:
+                raise RuntimeError('validator failed')
+
+        with patch.object(ci_checks.subprocess, 'Popen', return_value=server) as popen, \
+                patch.object(ci_checks, 'urlopen', return_value=response), \
+                patch.object(ci_checks, 'run', side_effect=capture):
+            if fail:
+                with self.assertRaisesRegex(RuntimeError, 'validator failed'):
+                    ci_checks.accessibility(SOURCE, self.root)
+            else:
+                ci_checks.accessibility(SOURCE, self.root)
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].exists())
+        self.assertEqual({p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}, before)
+        server.terminate.assert_called_once()
+        server.wait.assert_called_once_with(timeout=10)
+
+    def test_r6_a11y_copy(self):
+        self.audit_copy_probe()
+
+    def test_r6_a11y_copy_failure_cleanup(self):
+        self.audit_copy_probe(fail=True)
+
+    def test_r5_gradient_backgrounds_decorative(self):
+        # Parse every stylesheet, including nested rules and background-image
+        # longhands. No content-bearing element may own the hero gradient.
+        gradients = []
+        for path in common.site_files(self.root, '.css'):
+            rules, _ = v5.css_rules(path.read_text())
+            for selectors, declarations, context in rules:
+                for prop, value in declarations:
+                    if prop in {'background', 'background-image'} and 'gradient(' in value.lower():
+                        gradients.append((path.relative_to(self.root).as_posix(),
+                                          selectors, prop, value, context))
+        self.assertEqual(gradients, [('style.css', ('.hero::before',), 'background',
+                         'radial-gradient(ellipse 75% 65% at 50% 47%, var(--glow), transparent)', ())])
+
+    def test_r5_hero_glow_stacking(self):
+        rules, _ = v5.css_rules((self.root / 'style.css').read_text())
+        hero = [dict(d) for s, d, c in rules if s == ('.hero',) and not c]
+        self.assertEqual(len(hero), 1)
+        self.assertEqual(hero[0].get('position'), 'relative')
+        self.assertEqual(hero[0].get('isolation'), 'isolate')
+        self.assertFalse({'background', 'background-image'} & hero[0].keys())
+        before = [dict(d) for s, d, c in rules if s == ('.hero::before',) and not c]
+        self.assertEqual(before, [{
+            'content': '""', 'position': 'absolute', 'inset': '0', 'z-index': '-1',
+            'background': 'radial-gradient(ellipse 75% 65% at 50% 47%, var(--glow), transparent)',
+            'pointer-events': 'none'}])
+
+    def test_r5_hero_glow_visibility(self):
+        # A negative decorative layer does not hide text; keep all existing
+        # conservative selector/ancestor audits active for actual hiding rules.
+        rules, _ = v5.css_rules((self.root / 'style.css').read_text())
+        before = [d for s, d, c in rules if s == ('.hero::before',) and not c]
+        self.assertEqual(len(before), 1)
+        self.assertEqual(page_visibility.hiding_reasons(before[0]), [])
+        self.assertEqual(page_visibility.page_visibility_errors(self.root), [])
+        self.css_probe('.hero-description { opacity: 0; }')
+
+    def test_r4_landmark_names(self):
+        # Different IDREFs can resolve to the same accessible name.
+        for name in common.HTML_PAGES:
+            page = common.read_page(self.root / name)
+            names = {}
+            for node in page.nodes:
+                refs = node.attr.get('aria-labelledby', '').split()
+                if node.tag not in {'section', 'nav'} or not (refs or node.tag == 'nav'):
+                    continue
+                label = node.attr.get('aria-label', '')
+                if refs:
+                    labels = []
+                    for ref in refs:
+                        targets = [n for n in page.nodes if n.attr.get('id') == ref]
+                        self.assertEqual(len(targets), 1, (name, ref))
+                        labels.append(common.normalized(common.visible_text(targets[0])))
+                    label = ' '.join(labels)
+                self.assertTrue(label.strip(), (name, node.tag))
+                self.assertNotIn(label, names.setdefault(node.tag, []), (name, label))
+                names[node.tag].append(label)
+
+    def test_r4_a11y_reduced_motion_config(self):
+        # Exercise the emitted config; only browser/server execution is external.
+        trusted = json.loads((SOURCE / '.pa11yci.json').read_text())
+        server = MagicMock()
+        server.poll.return_value = None
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        seen = []
+
+        def capture(command, cwd):
+            config_path = Path(command[command.index('--config') + 1])
+            config = json.loads(config_path.read_text())
+            args = config['defaults']['chromeLaunchConfig']['args']
+            self.assertIn('--force-prefers-reduced-motion', args)
+            args.remove('--force-prefers-reduced-motion')
+            self.assertEqual(config['defaults'], trusted['defaults'])
+            self.assertEqual(set(config['urls']),
+                             {'http://127.0.0.1:8080/' + n for n in common.HTML_PAGES})
+            self.assertEqual(command[:5], ['npx', '--yes', '--package=pa11y-ci@4.0.0',
+                                          '--', 'pa11y-ci'])
+            self.assertEqual(cwd, SOURCE)
+            self.assertFalse(config_path.is_relative_to(self.root))
+            seen.append(config_path)
+
+        with patch.object(ci_checks.subprocess, 'Popen', return_value=server), \
+                patch.object(ci_checks, 'urlopen', return_value=response), \
+                patch.object(ci_checks, 'run', side_effect=capture):
+            ci_checks.accessibility(SOURCE, self.root)
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].exists())
+
+    def test_r3_page_pin_baseline(self):
+        self.assertEqual(page_pins.page_pin_errors(self.root), [])
+        self.assertEqual(set(page_pins.PAGE_SHA256), set(common.HTML_PAGES))
+
+    def test_r3_page_pin_integrity(self):
+        for name in common.HTML_PAGES:
+            p = self.root / 'legal/page-pins' / (name + '.txt')
+            original = p.read_bytes()
+            for data in [original + b'\n', b'{}\n', None]:
+                if data is None:
+                    p.unlink()
+                else:
+                    p.write_bytes(data)
+                self.error(page_pins.page_pin_errors, name + ': page pin sha256 mismatch')
+                p.write_bytes(original)
+
+    def test_r3_added_about_sentence(self):
+        self.body('<p>Every feature is in the private pilot</p>', 'about.html')
+        self.error(page_pins.page_pin_errors, 'about.html: complete body skeleton differs')
+
+    def test_r3_changed_index_class(self):
+        self.edit('index.html', 'class="hero"', 'class="hero reading"')
+        self.error(page_pins.page_pin_errors, 'index.html: complete body skeleton differs')
+
+    def test_r3_reordered_section(self):
+        path = self.root / 'index.html'
+        source = path.read_text()
+        start = source.index('<section id="ami"')
+        middle = source.index('<section id="pilot"')
+        end = source.index('<section class="closing')
+        path.write_text(source[:start] + source[middle:end] + source[start:middle] + source[end:])
+        self.error(page_pins.page_pin_errors, 'index.html: complete body skeleton differs')
+
+    def test_r3_added_actions_split_spans(self):
+        self.body('<div class="actions"><span>All features are</span><span>live</span></div>')
+        self.error(page_pins.page_pin_errors, 'index.html: complete body skeleton differs')
+        self.error(v5.claim_errors, "index.html: banned claim word: 'live'")
+
+    def test_r3_pin_text_every_page(self):
+        for name in common.HTML_PAGES:
+            self.edit(name, '>Skip to content<', '>Skip to main content<')
+            self.error(page_pins.page_pin_errors, name + ': complete body skeleton differs')
+
+    def test_r3_pin_removed_element_every_page(self):
+        for name in common.HTML_PAGES:
+            self.edit(name, '<a class="skip" href="#main">Skip to content</a>', '')
+            self.error(page_pins.page_pin_errors, name + ': complete body skeleton differs')
+
+    def test_r3_pin_attributes(self):
+        original = (self.root / 'index.html').read_bytes()
+        for old, new in [('href="features.html"', 'href="about.html"'),
+                         ('aria-label="Main"', 'aria-label="Other"'),
+                         ('id="home-h"', 'id="other-h"'),
+                         ('src="img/coami-logo.svg"', 'src="img/coami-logo-light-on-dark.svg"'),
+                         ('alt="CoAmi"', 'alt="Other"'),
+                         ('tabindex="-1"', 'tabindex="0"')]:
+            (self.root / 'index.html').write_bytes(original)
+            self.edit('index.html', old, new)
+            self.error(page_pins.page_pin_errors, 'index.html: complete body skeleton differs')
+
+    def skeleton_variants(self, pairs):
+        for before, after in pairs:
+            with self.subTest(before=before, after=after):
+                self.assertNotEqual(page_pins.skeleton_bytes(common.Page('<body>' + before + '</body>')),
+                                    page_pins.skeleton_bytes(common.Page('<body>' + after + '</body>')))
+
+    def test_r3_skeleton_classes(self):
+        self.skeleton_variants([('<p class="a">Same</p>', '<p class="b">Same</p>')])
+
+    def test_r3_skeleton_attributes(self):
+        self.skeleton_variants([('<a href="index.html">Same</a>', '<a href="about.html">Same</a>')])
+
+    def test_r3_skeleton_text_slots(self):
+        self.skeleton_variants([('<p>A<span>B</span>C</p>', '<p>AC<span>B</span></p>'),
+                                ('<p>A B</p>', '<p>A  B</p>')])
+
+    def test_r3_skeleton_nesting(self):
+        self.skeleton_variants([('<div><p>A</p></div><p>B</p>', '<div><p>A</p><p>B</p></div>'),
+                                ('<p>A</p><p>B</p>', '<p>B</p><p>A</p>'),
+                                ('<p>A</p>', '<div>A</div>')])
+
+    def test_r3_split_claim_every_page(self):
+        for name in common.HTML_PAGES:
+            self.body('<div class="actions"><span>All features are</span><span>live</span></div>', name)
+            self.error(v5.claim_errors, name + ": banned claim word: 'live'")
+
+    def test_r3_text_element_boundaries(self):
+        for extract in [common.separated_text, common.visible_text, common.copy_text]:
+            for tag in ['span', 'a', 'strong', 'em', 'br', 'li', 'svg']:
+                fragment = ('<ul><li>All features are</li><li>live</li></ul>' if tag == 'li' else
+                            '<p>All features are<br>live</p>' if tag == 'br' else
+                            f'<div>All features are<{tag}>live</{tag}></div>')
+                with self.subTest(extract=extract.__name__, tag=tag):
+                    self.assertEqual(common.normalized(extract(common.Page(fragment).root)), 'All features are live')
+            self.assertEqual(common.normalized(extract(common.Page('<p>x<span></span>live</p>').root)), 'x live')
+            if extract is not common.separated_text:
+                self.assertEqual(common.normalized(extract(common.Page('<p>x<span hidden="hidden">other</span>live</p>').root)), 'x live')
+
+    def test_r3_claims_split_and_hidden(self):
+        for fragment in ['<p>All features are<strong>live</strong></p>',
+                         '<p>All features are<br>live</p>',
+                         '<div aria-hidden="true"><em>All features are</em><span>live</span></div>',
+                         '<p><span>available</span><span>now</span></p>']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body(fragment)
+            self.error(v5.claim_errors, 'index.html: banned claim word')
+
+    def test_r3_original_ban_split_words(self):
+        for fragment in ['<p>M<span>FA</span></p>', '<p><span>100</span><span>users</span></p>']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body(fragment)
+            self.error(invariants.check, 'index.html: banned visible copy')
+
+    def test_r3_raw_text_pin_exception_boundaries(self):
+        self.edit('features.html', 'Shared inbox and live chat', 'Shared inbox and <span></span>live chat')
+        self.assertEqual(v5.claim_errors(self.root), [])
+        self.error(page_pins.page_pin_errors, 'features.html: complete body skeleton differs')
+
+    def test_r3_disclaimer_brand_dark(self):
+        self.edit('features.html', 'class="feature-disclaimer"', 'class="feature-disclaimer brand-dark"')
+        self.error(page_pins.page_pin_errors, 'features.html: complete body skeleton differs')
+        self.error(page_visibility.page_visibility_errors, 'features.html: Visibility hiding rule .brand-dark')
+
+    def test_r3_status_spans_skip(self):
+        path = self.root / 'features.html'
+        text = path.read_text()
+        self.assertEqual(text.count('<span class="status '), 36)
+        path.write_text(text.replace('<span class="status ', '<span class="skip status '))
+        self.error(page_pins.page_pin_errors, 'features.html: complete body skeleton differs')
+        self.error(page_visibility.page_visibility_errors, 'features.html: Visibility hiding rule .skip')
+
+    def css_probe(self, rule):
+        (self.root / 'style.css').write_text((SOURCE / 'style.css').read_text() + '\n' + rule)
+        self.error(page_visibility.page_visibility_errors, 'Visibility hiding')
+
+    def test_r3_visibility_baseline(self):
+        self.assertEqual(page_visibility.page_visibility_errors(self.root), [])
+
+    def test_r3_visibility_sr_only(self):
+        self.css_probe('.feature-disclaimer { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }')
+
+    def test_r3_visibility_display(self):
+        for value in ['none', 'none !important', r'n\6f ne']:
+            self.css_probe('.status { display: ' + value + '; }')
+
+    def test_r3_visibility_hidden(self):
+        for prop in ['visibility', 'content-visibility']:
+            self.css_probe('.hero-description { ' + prop + ':hidden; }')
+
+    def test_r3_visibility_opacity_font(self):
+        for prop, value in [('opacity', '0'), ('opacity', '0%'), ('opacity', '.0'), ('opacity', '0e0'), ('font-size', '0px'), ('font', '0/0 Urbanist')]:
+            self.css_probe('.feature-content { ' + prop + ':' + value + '; }')
+
+    def test_r3_visibility_positioned(self):
+        for position in ['absolute', 'fixed']:
+            for offset in ['left:-9999px', 'top:100vh', 'inset-inline-start:-200vw']:
+                self.css_probe('.hero-copy { position:' + position + ';' + offset + '; }')
+
+    def test_r3_visibility_transform_indent(self):
+        for declaration in ['transform:translateX(-200vw)', 'translate:0 -200vh', 'text-indent:-9999px']:
+            self.css_probe('.feature-disclaimer {' + declaration + ';}')
+
+    def test_r3_visibility_collapsed(self):
+        for rule in ['.status { height:0; overflow:hidden; }',
+                     '.status { max-block-size:0px; overflow:clip; }',
+                     '.status { height:0; } .status { overflow:hidden; }',
+                     '.status { position:absolute; } .status { left:-9999px; }']:
+            self.css_probe(rule)
+
+    def test_r3_visibility_all_selectors(self):
+        for selector in ['.status:hover', '.feature-list span', 'p', '*', '[class~="status"]', r'.st\61 tus', '.status, .feature-disclaimer']:
+            self.css_probe(selector + ' {display:none;}')
+
+    def test_r3_visibility_context_and_other_css(self):
+        self.css_probe('@media (max-width:560px) { .feature-disclaimer {display:none;} }')
+        (self.root / 'style.css').write_bytes((SOURCE / 'style.css').read_bytes())
+        (self.root / 'extra.css').write_text('.status { opacity:0; }')
+        self.error(page_visibility.page_visibility_errors, 'Visibility hiding rule .status')
+
+    def test_r3_visibility_exception_rules_fixed(self):
+        for rule in ['.brand-dark {opacity:0;}', '.skip {display:none;}',
+                     '.brand-light {display:none;}', '.brand-dark p {display:none;}']:
+            self.css_probe(rule)
+
+    def test_r3_visibility_pin_required(self):
+        (self.root / 'legal/page-pins/features.html.txt').unlink()
+        self.error(page_visibility.page_visibility_errors, 'features.html: Visibility requires trusted page pin')
+
+    def test_r3_visibility_attributes(self):
+        for attr in ['hidden="hidden"', 'aria-hidden="true"', 'inert="inert"']:
+            (self.root / 'features.html').write_bytes((SOURCE / 'features.html').read_bytes())
+            self.edit('features.html', '<p class="feature-disclaimer"', '<p ' + attr + ' class="feature-disclaimer"')
+            self.error(page_visibility.page_visibility_errors, 'features.html: Visibility unapproved')
+
+    def test_r3_visibility_parse_fail_closed(self):
+        (self.root / 'style.css').write_text('.status {')
+        self.error(page_visibility.page_visibility_errors, 'Visibility: CSS parse failed')
+
+    def test_r3_pages_wiring(self):
+        self.body('<p>Every feature is in the private pilot</p>', 'about.html')
+        self.error(v5.check, 'about.html: complete body skeleton differs')
+
+    def test_r3_visibility_wiring(self):
+        self.css_probe('.status {display:none;}')
+        self.error(v5.check, 'Visibility hiding rule .status')
+
+    def test_v5_footer_band(self):
+        self.edit('privacy.html', '>Contact<', '>Other<')
+        self.error(privacy.check, 'Privacy footer navigation must match the approved v5 markup')
+
+    def test_v5_feature_baseline(self):
+        self.assertEqual(v5.feature_errors(self.root), [])
+
+    def test_v5_feature_pin(self):
+        path = self.root / v5.FEATURES_PATH
+        original = path.read_bytes()
+        for replacement in [original + b' ', b'{}', None]:
+            if replacement is None:
+                path.unlink()
+            else:
+                path.write_bytes(replacement)
+            self.error(v5.feature_errors, 'Features approved-copy sha256 mismatch')
+            path.write_bytes(original)
+
+    def test_v5_feature_path_fixed(self):
+        self.assertEqual(v5.FEATURES_PATH.as_posix(), 'legal/approved-features-copy.txt')
+        (self.root / 'alternative.txt').write_bytes((self.root / v5.FEATURES_PATH).read_bytes())
+        (self.root / v5.FEATURES_PATH).unlink()
+        self.error(v5.feature_errors, 'Features approved-copy sha256 mismatch')
+        self.assertIn('/legal/', (SOURCE / '.github/CODEOWNERS').read_text())
+
+    def test_v5_feature_words(self):
+        original = (self.root / 'features.html').read_text()
+        data = json.loads((self.root / v5.FEATURES_PATH).read_text())
+        values = [data[k] for k in ('heading', 'subheading', 'disclaimer')]
+        values.extend(text for section in data['sections'] for item in section['items'] for text in item[:2])
+        for text in values:
+            with self.subTest(text=text):
+                # Short titles can also occur inside metadata/other words.
+                self.assertIn('>' + text + '<', original)
+                (self.root / 'features.html').write_text(original.replace(
+                    '>' + text + '<', '>' + text + ' Changed<', 1))
+                self.error(v5.feature_errors, 'Features complete visible copy/order differs')
+        (self.root / 'features.html').write_text(original)
+        self.body('<p>' + data['heading'] + '</p>', 'features.html')
+        self.error(v5.feature_errors, 'Features item must occur exactly once')
+
+    def test_v5_feature_status_association(self):
+        self.edit('features.html', 'Planned for the private pilot', 'Planned')
+        # Swap one other row to keep counts identical; association must fail.
+        self.edit('features.html', '<h3>Needs You</h3>', '<h3>Needs You</h3>')
+        path = self.root / 'features.html'
+        text = path.read_text()
+        index = text.index('<h3>Needs You</h3>')
+        path.write_text(text[:index] + text[index:].replace('>Planned</span>', '>Planned for the private pilot</span>', 1))
+        self.error(v5.feature_errors, 'Features title/sentence/status association differs')
+
+    def test_v5_feature_status_counts(self):
+        for label in ['Planned', 'Planned for the private pilot', 'In the private pilot']:
+            (self.root / 'features.html').write_bytes((SOURCE / 'features.html').read_bytes())
+            self.body('<p>' + label + '</p>', 'features.html')
+            self.error(v5.feature_errors, 'Features status counts must be 6 pilot, 30 Planned, 0 in pilot')
+
+    def test_v5_notice_only_privacy(self):
+        notice = (self.root / 'legal/approved-privacy-notice.html').read_text()
+        for name in common.HTML_PAGES:
+            if name == 'privacy.html':
+                continue
+            self.body(notice, name)
+            self.error(privacy.check, name + ': privacy notice is forbidden')
+            (self.root / name).write_bytes((SOURCE / name).read_bytes())
+
+    def test_v5_claim_baseline(self):
+        self.assertEqual(v5.claim_errors(self.root), [])
+
+    def test_r2_live_chat_pinned(self):
+        self.edit('features.html', 'Shared inbox and live chat', 'Shared inbox and LIVE CHAT')
+        self.assertEqual(v5.claim_errors(self.root), [])
+
+    def test_r2_live_chat_other_pages(self):
+        for name in common.HTML_PAGES:
+            if name == 'features.html':
+                continue
+            self.body('<p>Live chat</p>', name)
+            self.error(v5.claim_errors, name + ": banned claim word: 'Live'")
+
+    def test_r2_live_chat_outside_item(self):
+        self.body('<p>live chat</p>', 'features.html')
+        self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_go_live_in_item(self):
+        for title in ['go live', 'live chatter', 'live  chat', 'live-chat']:
+            (self.root / 'features.html').write_bytes((SOURCE / 'features.html').read_bytes())
+            self.edit('features.html', 'Shared inbox and live chat', 'Shared inbox and ' + title)
+            self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_live_chat_requires_pin(self):
+        self.edit('features.html', 'Shared inbox and live chat', 'Unapproved live chat')
+        self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_live_chat_pin_hash(self):
+        path = self.root / v5.FEATURES_PATH
+        path.write_bytes(path.read_bytes() + b' ')
+        self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_live_chat_hidden_and_attributes(self):
+        original = (SOURCE / 'features.html').read_text()
+        for replacement in ['<h3 title="live chat">Shared inbox and live chat</h3>',
+                            '<h3>Shared inbox and live chat<span hidden="hidden">live chat</span></h3>']:
+            (self.root / 'features.html').write_text(original.replace(
+                '<h3>Shared inbox and live chat</h3>', replacement))
+            self.error(v5.claim_errors, "features.html: banned claim word: 'live'")
+
+    def test_r2_live_chat_legal_elements(self):
+        for tag, name in [('footer', 'index.html'), ('article', 'privacy.html')]:
+            path = self.root / name
+            original = path.read_text()
+            pin = self.root / v5.PINS[tag]
+            raw = pin.read_text()
+            for replacement in [raw.replace('Trett Labs Limited', 'Trett Labs Limited live chat', 1),
+                                raw.replace('<' + tag, '<' + tag + ' title="live chat"', 1)]:
+                pin.write_text(replacement)
+                path.write_text(original.replace(raw, replacement))
+                self.error(v5.claim_errors, name + ": banned claim word: 'live'")
+            pin.write_text(raw)
+            path.write_text(original)
+
+    def test_r2_purple_baseline(self):
+        self.assertEqual(v5.purple_errors(self.root), [])
+
+    def test_r2_purple_button(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for colour in [*v5.PURPLE_HEX, 'rgb(122 79 160 / 7%)', 'rgb(122 79 160 / 12%)',
+                       'rgba(122,79,160,.5)', '#7A4FA080', r'\23 7a4fa0']:
+            with self.subTest(colour=colour):
+                path.write_text(original + '\n.btn { color: ' + colour + '; }\n')
+                self.error(v5.purple_errors, 'purple outside .enso rule: .btn')
+
+    def test_r2_purple_inline_svg(self):
+        for attribute in ['fill', 'stroke']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body('<svg viewBox="0 0 24 24"><path ' + attribute + '="#7a4fa0" d="M0 0h1"/></svg>')
+            self.error(v5.purple_errors, 'index.html: purple in page attribute/inline CSS')
+
+    def test_r2_purple_html_attributes(self):
+        for attribute in ['color', 'bgcolor', 'style', 'data-colour']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body('<p ' + attribute + '="color: rgb(122 79 160)">word</p>')
+            self.error(v5.purple_errors, 'index.html: purple in page attribute/inline CSS')
+
+    def test_r2_purple_enso(self):
+        path = self.root / 'style.css'
+        with path.open('a') as stream:
+            stream.write('\n.enso, .enso .line, .enso > .dot { stroke: #7a4fa0; }\n'
+                         '@media (prefers-color-scheme: dark) { .enso { color: #c9a6ec; } }\n')
+        self.assertEqual(v5.purple_errors(self.root), [])
+
+    def test_r2_purple_selector_scope(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for selector in ['.enso, .btn', '.enso + .btn', '.enso ~ .btn', '.enso-line',
+                         ':root', '.enso:hover', 'body .enso']:
+            path.write_text(original + '\n' + selector + ' { color: #7a4fa0; }\n')
+            self.error(v5.purple_errors, 'purple outside .enso rule: ' + selector)
+
+    def test_r2_purple_other_css(self):
+        (self.root / 'extra.css').write_text('.enso { color: #7a4fa0; }')
+        self.error(v5.purple_errors, 'extra.css: purple outside .enso rule')
+
+    def test_r2_purple_hue_guard(self):
+        for colour in ['#801ae6', 'rgb(128 26 230)', 'rgb(50% 10% 90%)',
+                       'hsl(260 50% 50%)', 'hsl(300 50% 50%)', 'hsl(270 50% 20%)',
+                       'hsl(270 50% 80%)', 'hsla(.75turn,50%,50%,.3)',
+                       'rebeccapurple', 'hwb(270 10% 10%)', 'color(srgb .5 .1 .9)']:
+            with self.subTest(colour=colour):
+                self.assertTrue(list(v5.purple_colours(colour)))
+        for colour in ['hsl(259 50% 50%)', 'hsl(301 50% 50%)', 'hsl(270 25% 50%)',
+                       'hsl(270 50% 19%)', 'hsl(270 50% 81%)', '#241c2c', '#ffffff']:
+            with self.subTest(colour=colour):
+                self.assertEqual(list(v5.purple_colours(colour)), [])
+
+    def test_r2_purple_palette_identity(self):
+        # The icon's pale purple is outside the hue guard's lightness range.
+        self.assertTrue(list(v5.purple_colours('rgb(226 207 243 / 1%)')))
+
+    def test_r2_purple_parse_fail_closed(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for extra in ['.btn { color: #7a4fa0;', '.btn { color: color(display-p3 .5 .1 .9); }',
+                      '.btn { color: oklch(50% .2 290); }', '.btn { color: rgb(calc(100 + 22) 79 160); }']:
+            path.write_text(original + '\n' + extra)
+            self.error(v5.purple_errors, 'Purple: CSS/colour parse failed')
+
+    def test_r2_purple_rule_preludes(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        for extra in ['@supports (color: #7a4fa0) { .btn { color: black; } }',
+                      '.btn[data-colour="#7a4fa0"] { color: black; }']:
+            path.write_text(original + '\n' + extra)
+            self.error(v5.purple_errors, 'purple in CSS rule/at-rule prelude')
+
+    def test_r2_purple_wiring(self):
+        with patch.object(v5, 'purple_errors', return_value=['purple sentinel']):
+            self.error(v5.check, 'purple sentinel')
+
+    def test_v5_claims_every_page(self):
+        for name in common.HTML_PAGES:
+            for word in ['LIVE', 'secure', 'Checked', 'working preview', 'available now', 'guaranteed']:
+                self.body('<p>' + word + '</p>', name)
+                self.assertIn(name + ': banned claim word: ' + repr(word), v5.claim_errors(self.root))
+                (self.root / name).write_bytes((SOURCE / name).read_bytes())
+
+    def test_v5_claims_all_copy(self):
+        for fragment in ['<p>se<span>cure</span></p>', '<svg aria-hidden="true"><text>secure</text></svg>',
+                         '<p aria-label="checked">word</p>', '<p hidden="hidden">guaranteed</p>']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.body(fragment)
+            self.assertTrue(any(e.startswith('index.html: banned claim word:') for e in v5.claim_errors(self.root)))
+        (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+        self.edit('index.html', '</title>', ' available now</title>')
+        self.error(v5.claim_errors, "index.html: banned claim word: 'available now'")
+
+    def test_v5_claim_word_boundaries(self):
+        self.body('<p>lively unchecked securely guaranteedly</p>')
+        self.assertEqual(v5.claim_errors(self.root), [])
+
+    def test_v5_claim_pin_exception(self):
+        for tag, name in [('footer', 'index.html'), ('article', 'privacy.html')]:
+            original = (self.root / name).read_text()
+            pin = self.root / v5.PINS[tag]
+            raw = pin.read_text()
+            replacement = raw.replace('Trett Labs Limited', 'Trett Labs Limited guaranteed', 1)
+            pin.write_text(replacement)
+            (self.root / name).write_text(original.replace(raw, replacement))
+            self.assertFalse(any(e.startswith(name + ': banned claim word:') for e in v5.claim_errors(self.root)))
+            self.body('<p>live</p>', name)
+            self.error(v5.claim_errors, name + ": banned claim word: 'live'")
+            (self.root / name).write_text(original)
+            pin.write_text(raw)
+
+    def test_v5_motion_baseline(self):
+        self.assertEqual(v5.motion_errors(self.root), [])
+
+    def test_v5_motion_remove_reduce(self):
+        path = self.root / 'style.css'
+        path.write_text(path.read_text().split('@media (prefers-reduced-motion: reduce)')[0])
+        self.error(v5.motion_errors, 'needs reduced-motion')
+
+    def test_v5_motion_new_keyframe(self):
+        path = self.root / 'style.css'
+        path.write_text(path.read_text() + '@keyframes probe { from { opacity: 0; } to { opacity: 1; } }')
+        self.error(v5.motion_errors, 'keyframes without a covered animated selector: probe')
+
+    def test_v5_motion_new_selector(self):
+        path = self.root / 'style.css'
+        path.write_text(path.read_text() + '@keyframes probe { from { opacity: 0; } to { opacity: 1; } } .probe { animation: probe 1s; }')
+        self.error(v5.motion_errors, '.probe needs reduced-motion animation: none')
+
+    def test_v5_motion_important(self):
+        path = self.root / 'style.css'
+        path.write_text('@keyframes probe { from { opacity: 0; } to { opacity: 1; } } .probe { animation: probe 1s !important; }' + path.read_text())
+        self.error(v5.motion_errors, '.probe needs reduced-motion animation: none')
+
+    def test_v5_motion_transition(self):
+        self.edit('style.css', 'transition: none !important;', 'color: inherit;')
+        self.error(v5.motion_errors, '.btn needs reduced-motion transition: none')
+
+    def test_v5_motion_wrong_condition(self):
+        self.edit('style.css', '@media (prefers-reduced-motion: reduce)', '@media (max-width: 1px)')
+        self.error(v5.motion_errors, 'needs reduced-motion')
+
+    def test_v5_motion_parse_fail_closed(self):
+        path = self.root / 'style.css'
+        for suffix in ['.probe {', '}', '.probe { animation }', '@unknown thing {}']:
+            path.write_bytes((SOURCE / 'style.css').read_bytes() + suffix.encode())
+            self.error(v5.motion_errors, 'Motion: CSS parse failed')
+
+    def test_v5_motion_infinite(self):
+        path = self.root / 'style.css'
+        original = path.read_text()
+        path.write_text('.hero-copy { animation-iteration-count: infinite; }' + original)
+        self.error(v5.motion_errors, 'infinite animation exceeds an icon: .hero-copy')
+
+    def test_v5_new_pages_fail_closed(self):
+        for name in common.HTML_PAGES:
+            original = (self.root / name).read_bytes()
+            (self.root / name).unlink()
+            self.error(resources.check, 'Missing document: ' + name)
+            (self.root / name).write_bytes(original)
+        (self.root / 'unlisted.html').write_bytes((SOURCE / 'about.html').read_bytes())
+        self.error(resources.check, 'Unexpected document:')
+
+    def test_v5_ci_wiring(self):
+        commands = ci_checks.commands('invariants', SOURCE, self.root)
+        self.assertEqual([Path(c[3]).name for c in commands], ['check_invariants.py', 'check_v5.py'])
+        html = ci_checks.commands('html', SOURCE, self.root)[0]
+        self.assertEqual({p for p in html if p.endswith('.html')}, {'./' + n for n in common.HTML_PAGES})
+        self.assertEqual(set(json.loads((SOURCE / '.pa11yci.json').read_text())['urls']),
+                         {'http://127.0.0.1:8080/' + n for n in common.HTML_PAGES})
+
+    def test_logo_image_hashes(self):
+        for name in allowlist.IMAGE_HASHES:
+            path = self.root / name
+            original = path.read_bytes()
+            for data in [original + b'\n', None]:
+                with self.subTest(name=name, missing=data is None):
+                    if data is None:
+                        path.unlink()
+                    else:
+                        path.write_bytes(data)
+                    self.error(resources.check, 'Approved image sha256 mismatch: ' + name)
+                    path.write_bytes(original)
+
+    def test_logo_png_signature(self):
+        for name in ['apple-touch-icon.png']:
+            path = self.root / name
+            original = path.read_bytes()
+            self.assertTrue(original.startswith(b'\x89PNG\r\n\x1a\n'))
+            path.write_bytes(b'not PNG!' + original[8:])
+            self.error(resources.check, 'Approved PNG must start with PNG signature: ' + name)
+            path.write_bytes(original)
+
+    def test_favicon_ico_signature(self):
+        path = self.root / 'favicon.ico'
+        original = path.read_bytes()
+        self.assertTrue(original.startswith(b'\x00\x00\x01\x00'))
+        path.write_bytes(b'BAD!' + original[4:])
+        self.error(resources.check, 'Approved ICO must start with ICO signature: favicon.ico')
+
+    def test_favicon_links_exact(self):
+        for name in common.HTML_PAGES:
+            original = (self.root / name).read_text()
+            block = '\n'.join(allowlist.ICON_LINKS)
+            self.assertIn(block, original)
+            self.assertEqual(resources.check(self.root), [])
+            ico, svg, apple = allowlist.ICON_LINKS
+            variants = [
+                '', '\n'.join([svg, ico, apple]), block + '\n' + ico,
+                block.replace(' sizes="48x48"', ''),
+                block.replace('48x48', '32x32'),
+                block.replace(' type="image/svg+xml"', ''),
+                block.replace('image/svg+xml', 'image/png'),
+                block.replace(apple, apple.replace('>', ' sizes="180x180">')),
+                block.replace(ico, ico.replace('>', ' media="all">')),
+                block.replace(ico, '<link href="favicon.ico" rel="icon" sizes="48x48">'),
+                block.replace('favicon.ico', './favicon.ico'),
+                block.replace('coami-icon.svg', 'img/coami-logo.svg'),
+                block.replace('apple-touch-icon.png', 'favicon.ico'),
+            ]
+            for variant in variants:
+                with self.subTest(page=name, variant=variant):
+                    (self.root / name).write_text(original.replace(block, variant))
+                    self.error(resources.check, 'expected exact three icon links in order')
+            (self.root / name).write_text(original)
+
+    def test_favicon_links_head(self):
+        for name in common.HTML_PAGES:
+            original = (self.root / name).read_text()
+            for icon in allowlist.ICON_LINKS:
+                with self.subTest(page=name, icon=icon):
+                    # Moving the final icon preserves order/count/spelling, isolating placement.
+                    text = original.replace(icon + '\n', '')
+                    (self.root / name).write_text(text.replace('<body>', '<body>\n' + icon))
+                    self.error(resources.check, 'icon links must be direct children of head')
+            (self.root / name).write_text(original)
+
+    def test_favicon_retired_files(self):
+        for name in ['favicon.svg', 'favicon-dark.svg', 'favicon-32.png',
+                     'apple-touch-icon-180.png']:
+            with self.subTest(name=name):
+                self.assertNotIn(name, allowlist.IMAGE_HASHES)
+                self.assertNotIn(name, common.EXPECTED_DOCUMENTS)
+                path = self.root / name
+                path.write_bytes(b'retired')
+                self.error(resources.check, 'Unapproved image file: ' + repr(name))
+                path.unlink()
+
+    def test_favicon_manifest(self):
+        self.edit('index.html', '</head>', '<link rel="manifest" href="site.webmanifest"></head>')
+        self.error(resources.check, 'forbidden link resource hint')
+        self.error(resources.check, 'link rel must be byte-exact stylesheet or icon')
+
+    def test_logo_img_source(self):
+        original = (self.root / 'index.html').read_text()
+        for src in ['https://evil.test/logo.svg', '//evil.test/logo.svg',
+                    'data:image/svg+xml,x', 'unknown.png', 'unknown.svg',
+                    '/img/coami-logo.svg', './img/coami-logo.svg',
+                    'img/coami-logo.svg?x=1', 'img/coami-logo.svg#x',
+                    'img/coami-logo.sv&#103;']:
+            with self.subTest(src=src):
+                (self.root / 'index.html').write_text(original)
+                self.body('<img src="' + src + '" alt="CoAmi">')
+                self.error(resources.check, 'img src must be byte-exact in pinned image set')
+        (self.root / 'index.html').write_text(original)
+        self.body('<img alt="CoAmi">')
+        self.error(resources.check, 'img src must be byte-exact in pinned image set')
+
+    def test_logo_unknown_image(self):
+        for name in ['unknown.png', 'img/unknown.png', 'unknown.svg', 'img/unknown.svg', 'unknown.ico']:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            source = ('coami-icon.svg' if name.endswith('.svg') else
+                      'favicon.ico' if name.endswith('.ico') else 'apple-touch-icon.png')
+            path.write_bytes((SOURCE / source).read_bytes())
+            self.error(resources.check, 'Unapproved image file: ' + repr(name))
+            path.unlink()
+
+    def test_logo_icon_source(self):
+        original = (self.root / 'index.html').read_text()
+        for rel in ['icon', 'apple-touch-icon']:
+            for href in ['unknown.png', 'https://evil.test/coami-icon.svg',
+                         '//evil.test/coami-icon.svg', '/coami-icon.svg', './coami-icon.svg',
+                         'coami-icon.svg?x=1', 'coami-icon.svg#x', 'coami-icon.sv&#103;']:
+                with self.subTest(rel=rel, href=href):
+                    (self.root / 'index.html').write_text(original)
+                    self.edit('index.html', '</head>', '<link rel="' + rel + '" href="' + href + '"></head>')
+                    self.error(resources.check, 'icon href must be byte-exact in pinned image set')
+
+    def test_logo_img_attributes(self):
+        original = (self.root / 'index.html').read_text()
+        for attribute in ['title', 'style', 'onerror', 'srcset', 'data-logo', 'href']:
+            (self.root / 'index.html').write_text(original)
+            self.body('<img src="img/coami-logo.svg" alt="CoAmi" ' + attribute + '="x">')
+            self.error(resources.check, 'forbidden attribute ' + attribute + ' on <img>')
+
+    def test_logo_pinned_resources_accepted(self):
+        for name in allowlist.IMAGE_HASHES:
+            self.body('<img src="' + name + '" alt="CoAmi" class="probe" width="100" height="40">')
+        self.assertEqual(resources.check(self.root), [])
+        self.assertEqual(links.check(self.root), [])
+        for name in allowlist.IMAGE_HASHES:
+            if name.endswith('.svg'):
+                self.assertEqual(common.read_page(self.root / name).errors, [])
+
+    def test_logo_privacy_brand(self):
+        original = (self.root / 'privacy.html').read_text()
+        for old, new in [('alt="CoAmi"', 'alt="Other"'),
+                         ('class="brand-light"', 'class="brand-dark"'),
+                         ('aria-label="CoAmi home"', 'aria-label="Other"'),
+                         ('src="img/coami-logo.svg"', 'src="coami-icon.svg"'),
+                         ('href="index.html" aria-label="CoAmi home"', 'href="privacy.html" aria-label="CoAmi home"')]:
+            (self.root / 'privacy.html').write_text(original)
+            self.edit('privacy.html', old, new)
+            self.error(privacy.check, 'Privacy header brand must match the approved theme images and home link')
+
+    def test_v4_old_p4_csp(self):
+        old = allowlist.CSP.replace(" font-src 'self';", '')
+        self.edit('index.html', allowlist.CSP, old)
+        self.markup_error('CSP content must be byte-exact ASCII policy', 'index.html')
+        self.error(resources.check, 'CSP content must be byte-exact ASCII policy')
+
+    def test_v4_extra_font(self):
+        for name in ['extra.woff2', 'extra.txt', 'SOURCE.md', 'nested/OFL.txt']:
+            path = self.root / 'fonts' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'wOF2extra')
+            self.error(resources.check, 'Unapproved font directory file')
+            path.unlink()
+
+    def test_v4_font_hash(self):
+        for name in common.FONT_HASHES:
+            original = (self.root / name).read_bytes()
+            (self.root / name).write_bytes(original + b'x')
+            self.error(resources.check, 'Approved font/license sha256 mismatch: ' + name)
+            (self.root / name).write_bytes(original)
+            (self.root / name).unlink()
+            self.error(resources.check, 'Approved font/license sha256 mismatch: ' + name)
+            (self.root / name).write_bytes(original)
+
+    def test_v4_font_magic(self):
+        name = 'fonts/urbanist-latin-var.woff2'
+        (self.root / name).write_bytes(b'not a woff2')
+        self.error(resources.check, 'woff2 must start with wOF2')
+
+    def test_v4_font_face_origin(self):
+        for url in ['https://evil.test/font.woff2', '//evil.test/font.woff2',
+                    '/elsewhere.woff2', 'fonts/extra.woff2', 'data:font/woff2;base64,d09GMg==']:
+            (self.root / 'style.css').write_bytes((SOURCE / 'style.css').read_bytes())
+            self.edit('style.css', 'url("fonts/urbanist-latin-var.woff2")', 'url(' + url + ')')
+            self.error(resources.check, 'forbidden CSS resource vector')
+
+    def test_v4_font_face_cardinality(self):
+        for rule in [resources.FONT_FACE, '@font-face{font-family:x;src:local(x)}']:
+            (self.root / 'style.css').write_text((SOURCE / 'style.css').read_text() + rule)
+            self.error(resources.check, 'forbidden CSS resource vector')
+
+    def test_v4_legal_bytes(self):
+        # Whitespace-free attribute spelling changes render identically but fail.
+        for name, tag, checker in [('index.html', 'footer', invariants.check),
+                                   ('privacy.html', 'article', privacy.check)]:
+            original = (SOURCE / name).read_bytes()
+            for old, new in [(b'<'+tag.encode()+b' class="', b'<'+tag.encode()+b' class ="'),
+                             (b'<'+tag.encode()+b' class="', b'<'+tag.encode()+b' aria-label="Legal" class="'),
+                             (b'<p>', b'<P>'), (b'<p>', b'<p >')]:
+                (self.root / name).write_bytes(original)
+                # Mutate only inside the protected element.
+                import legal_pins
+                chunk = legal_pins.element_bytes(original, tag)[0]
+                self.assertIn(old, chunk)
+                (self.root / name).write_bytes(original.replace(chunk, chunk.replace(old, new, 1), 1))
+                self.error(checker, 'match its approved pin byte for byte')
+
+    def test_v4_footer_svg(self):
+        for name in common.HTML_PAGES:
+            for opening, closing in [('<svg><defs><text>', '</text></defs></svg>'),
+                                     ('<svg><title>', '</title></svg>'),
+                                     ('<svg><desc>', '</desc></svg>')]:
+                (self.root / name).write_bytes((SOURCE / name).read_bytes())
+                text = (self.root / name).read_text()
+                start = text.index('<p>Trett Labs', text.index('<footer')) + 3
+                end = text.index('<a href="mailto:hello@coami.ai">', start)
+                (self.root / name).write_text(text[:start] + opening + text[start:end] + closing + text[end:])
+                self.error(invariants.check, 'match its approved pin byte for byte')
+
+    def test_v4_notice_svg(self):
+        for tag in ['defs', 'title', 'desc']:
+            (self.root / 'privacy.html').write_bytes((SOURCE / 'privacy.html').read_bytes())
+            self.edit('privacy.html', 'There is no sign-up here.',
+                      '<svg><' + tag + '>There is no sign-up here.</' + tag + '></svg>')
+            self.error(privacy.check, 'match its approved pin byte for byte')
+
+    def test_v4_second_legal_element(self):
+        import legal_pins
+        for name, tag, checker in [('index.html', 'footer', invariants.check),
+                                   ('privacy.html', 'article', privacy.check)]:
+            raw = (self.root / name).read_bytes()
+            chunk = legal_pins.element_bytes(raw, tag)[0]
+            (self.root / name).write_bytes(raw.replace(chunk, chunk + chunk))
+            self.error(checker, 'must occur exactly once and match its approved pin')
+
+    def test_v4_pin_semantics(self):
+        self.edit('legal/approved-footer.html', '17310137', '00000000')
+        with self.legal_fixture_digest('footer'):
+            self.error(invariants.check, 'Approved footer pin: Legal footer text')
+        self.edit('legal/approved-privacy-notice.html', 'no cookies', 'some cookies')
+        with self.legal_fixture_digest('article'):
+            self.error(privacy.check, 'Approved privacy pin text differs from D26')
+
+    def test_v4_pin_links(self):
+        self.edit('legal/approved-footer.html', 'href="privacy.html"', 'href="index.html"')
+        with self.legal_fixture_digest('footer'):
+            self.error(invariants.check, 'Approved footer pin: Legal footer links')
+
+    def test_v4_pin_notice_links(self):
+        pin = 'legal/approved-privacy-notice.html'
+        for url, diagnostic in [(privacy.ICO, 'ICO link href'),
+                                (privacy.GITHUB_PRIVACY, 'privacy statement link href')]:
+            (self.root / pin).write_bytes((SOURCE / pin).read_bytes())
+            self.edit(pin, url, 'https://evil.test/')
+            with self.legal_fixture_digest('article'):
+                self.error(privacy.check, 'Approved privacy pin: ' + diagnostic)
+
+    def test_v4_missing_pins(self):
+        (self.root / 'legal/approved-footer.html').unlink()
+        self.error(invariants.check, 'Missing or invalid approved footer pin')
+        (self.root / 'legal/approved-privacy-notice.html').unlink()
+        self.error(privacy.check, 'Missing or invalid approved privacy notice pin')
+
+    def test_v4_pin_validation(self):
+        import legal_pins
+        for tag, pin in legal_pins.PINS.items():
+            original = (self.root / pin).read_bytes()
+            for raw in [b'x' + original, original + original,
+                        original.replace(b'<p>', b'<p hidden="">', 1),
+                        original.replace(b'<p>', b'<p>\xff', 1)]:
+                (self.root / pin).write_bytes(raw)
+                with self.legal_fixture_digest(tag):
+                    self.assertIsNone(legal_pins.pin_page(self.root, tag))
+            (self.root / pin).write_bytes(original)
+
+    def test_v4_pin_notice_vocabulary(self):
+        self.edit('legal/approved-privacy-notice.html', 'There is no sign-up here.',
+                  '<svg><text>There is no sign-up here.</text></svg>')
+        with self.legal_fixture_digest('article'):
+            self.error(privacy.check, 'Approved privacy pin: forbidden notice element')
+
+    def test_v4_pin_notice_visibility(self):
+        self.edit('legal/approved-privacy-notice.html', 'class="legal text"', 'class="skip"')
+        with self.legal_fixture_digest('article'):
+            self.error(privacy.check, 'Approved privacy pin: Privacy notice visibility class placement')
+
+    def test_v4_banned_aria_svg(self):
+        for content in ['<svg viewBox="0 0 300 100" aria-hidden="true"><text x="0" y="50">GDPR certified secure</text></svg>',
+                        '<svg><text>GDPR certified secure</text></svg>']:
+            (self.root / 'index.html').write_bytes((SOURCE / 'index.html').read_bytes())
+            self.edit('index.html', '</main>', content + '</main>')
+            self.error(invariants.check, 'banned visible copy')
+        self.assertEqual(common.copy_text(common.Page('<div hidden="">secure</div>').root), '')
+        self.assertEqual(common.copy_text(common.Page('<template>secure</template>').root), '')
+
+    def test_real_pages(self):
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            with self.subTest(checker=checker.__module__):
+                self.assertEqual(checker(self.root), [])
+
+    def markup_error(self, fragment, name='privacy.html'):
+        self.assertIn(fragment, '\n'.join(common.read_page(self.root / name).errors))
+
+    def strict_page(self, body='', head='', prefix='<!doctype html>'):
+        return common.Page(prefix + '<html lang="en-GB"><head><meta charset="utf-8">'
+                           '<meta http-equiv="Content-Security-Policy" content="'
+                           + allowlist.CSP + '">' + head + '</head><body>'
+                           + body + '</body></html>')
+
+    def strict_error(self, body, diagnostic):
+        self.assertIn(diagnostic, '\n'.join(self.strict_page(body).errors))
+
+    def test_r6_sol_probes_all_checkers(self):
+        probes = [
+            ('<head>', '<head><![CDATA[><script>alert(1)</script>]]>', 'comments/marked sections forbidden'),
+            ('<head>', '<head><![CDATA[><link rel="stylesheet" href="https://evil.test/hide.css">]]>', 'comments/marked sections forbidden'),
+            ('<head>', '<head><![IGNORE[><p>Certified secure GDPR compliant</p>]]>', 'comments/marked sections forbidden'),
+            ('<head>', '<head><![CDATA[><style>main,footer{display:none}</style>]]>', 'comments/marked sections forbidden'),
+            ('<body>', '<body><div class="skip"/>', 'self-closing non-void'),
+            ('<head>', '<head>hello', 'only whitespace text'),
+            ('<head>', '<head><div></div>', 'head may contain only'),
+        ]
+        for old, new, diagnostic in probes:
+            with self.subTest(probe=new):
+                (self.root / 'privacy.html').write_bytes((SOURCE / 'privacy.html').read_bytes())
+                self.edit('privacy.html', old, new)
+                for checker in [resources.check, privacy.check, links.check, invariants.check]:
+                    self.error(checker, diagnostic)
+                # Every real CI entrypoint rejects before any command/server.
+                for kind in ['html', 'links', 'no-third-party', 'a11y', 'authors', 'privacy-text', 'invariants']:
+                    output = io.StringIO()
+                    with patch.object(sys, 'argv', ['ci_checks.py', '--root', str(self.root), '--', kind]), \
+                            patch.object(ci_checks, 'run') as run, \
+                            patch.object(ci_checks, 'accessibility') as a11y, \
+                            contextlib.redirect_stdout(output):
+                        self.assertEqual(ci_checks.main(), 1, (new, kind))
+                        run.assert_not_called()
+                        a11y.assert_not_called()
+                    self.assertIn(diagnostic, output.getvalue())
+
+    def test_r6_declarations(self):
+        for text in ['<!-- ordinary comment -->', '<!-- comment with > inside -->',
+                     '<![CDATA[abc]]>', '<![IGNORE[abc]]>', '<!bogus>',
+                     '<!DOCTYPE html>', '<!doctype html>', '<!>', '<!---->']:
+            self.strict_error(text, 'comments/marked sections forbidden')
+        self.assertFalse(self.strict_page().errors)
+
+    def test_r6_doctype_byte_zero(self):
+        for prefix in ['', '\ufeff<!doctype html>', ' <!doctype html>',
+                       '\n<!doctype html>', '<!DOCTYPE html>', '<!doctype HTML>']:
+            self.assertIn('doctype must be exactly', '\n'.join(self.strict_page(prefix=prefix).errors))
+
+    def test_r6_processing_instructions(self):
+        for text in ['<?xml version="1.0"?>', '<?bogus>', '<p><?xml</p>',
+                     '<p class="<?xml">x</p>']:
+            self.strict_error(text, 'processing instructions forbidden')
+
+    def test_r6_selfclosing_html(self):
+        for tag in ['div', 'p', 'section', 'a', 'span', 'main', 'ul', 'li', 'title', 'html', 'body', 'x']:
+            self.strict_error('<' + tag + '/>', 'self-closing non-void HTML element')
+        for text in ['<svg/>', '<svg><g/><circle/></svg>']:
+            self.assertFalse(self.strict_page(text).errors, text)
+        # hr/img are syntactically void but still excluded by the markup allowlist.
+        for tag in common.HTML_VOID:
+            self.assertNotIn('self-closing non-void', '\n'.join(self.strict_page('<' + tag + '/>').errors))
+
+    def test_r6_stray_end(self):
+        for tag in ['div', 'unknown', 'br', 'img']:
+            self.strict_error('</' + tag + '>', 'unpaired or misnested end tag')
+
+    def test_r6_misnested_end(self):
+        self.strict_error('<div><section></div></section>', 'unpaired or misnested end tag')
+        self.strict_error('<p><span></p></span>', 'unpaired or misnested end tag')
+
+    def test_r6_unclosed(self):
+        self.strict_error('<section>', 'unclosed non-void elements')
+        self.strict_error('<svg><g>', 'unclosed non-void elements')
+
+    def test_r6_document_root(self):
+        page = self.strict_page()
+        self.assertFalse(page.errors)
+        text = '<!doctype html><html lang="en-GB"><head><meta charset="utf-8"></head><body></body></html>'
+        for value in [text + '<div></div>', text + '<html></html>', text.replace('<html lang="en-GB">', '')]:
+            self.assertIn('document requires exactly one root html', '\n'.join(common.Page(value).errors))
+
+    def test_r6_head_body_cardinality(self):
+        for head, body in [('', '<body></body>'), ('<head></head>', ''),
+                           ('<head></head><head></head>', '<body></body>'),
+                           ('<head></head>', '<body></body><body></body>')]:
+            page = common.Page('<!doctype html><html lang="en-GB">' + head + body + '</html>')
+            self.assertIn('document requires exactly one head followed by one body', '\n'.join(page.errors))
+
+    def test_r6_head_body_order(self):
+        page = common.Page('<!doctype html><html lang="en-GB"><body></body><head>'
+                           '<meta charset="utf-8"></head></html>')
+        self.assertIn('html must contain exactly head then body', '\n'.join(page.errors))
+
+    def test_r6_head_body_parent(self):
+        page = common.Page('<!doctype html><html lang="en-GB"><div><head>'
+                           '<meta charset="utf-8"></head><body></body></div></html>')
+        self.assertIn('head/body must be direct children of html', '\n'.join(page.errors))
+
+    def test_r6_head_elements(self):
+        for tag in ['div', 'svg', 'p', 'section', 'br']:
+            self.assertIn('head may contain only meta, title and link', '\n'.join(
+                self.strict_page(head='<' + tag + '></' + tag + '>').errors))
+
+    def test_r6_structural_text(self):
+        for body in ['<ul>hello</ul>', '<ol>hello</ol>']:
+            self.strict_error(body, 'only whitespace text')
+        self.assertIn('only whitespace text', '\n'.join(self.strict_page(head='hello').errors))
+        page = common.Page('hello' + '<!doctype html><html><head></head><body></body></html>world')
+        self.assertIn('only whitespace text', '\n'.join(page.errors))
+
+    def test_r6_csp_before_link(self):
+        self.edit('privacy.html', '<meta charset="utf-8">',
+                  '<meta charset="utf-8"><link rel="icon" href="coami-icon.svg">')
+        self.markup_error('CSP must precede every link')
+
+    def test_r6_phrasing_models(self):
+        for parent in ['p', 'h1', 'h2', 'h3', 'a', 'span', 'button', 'strong', 'em']:
+            for child in ['div', 'p', 'h2', 'ul', 'section']:
+                self.strict_error('<' + parent + '><' + child + '></' + child + '></' + parent + '>',
+                                  'phrasing content required')
+        self.assertFalse(self.strict_page('<p><span><a href="#main">text</a></span></p>').errors)
+
+    def test_r6_list_models(self):
+        for tag in ['ul', 'ol']:
+            self.strict_error('<' + tag + '><p>text</p></' + tag + '>', 'ul/ol may contain only li')
+        self.strict_error('<li>text</li>', 'li must be a direct child')
+        self.strict_error('<ul><li><li>text</li></li></ul>', 'li must be a direct child')
+        self.assertFalse(self.strict_page('<ul><li><span>Step</span> text</li></ul>').errors)
+
+    def test_r6_li_allows_flow(self):
+        # li may hold flow content such as h3/p (browsers parse it identically).
+        for child in ['h3', 'p']:
+            self.assertEqual(self.strict_page('<ul><li><' + child + '>text</' + child + '></li></ul>').errors, [])
+        self.strict_error('<ul><li><meta charset="utf-8"></li></ul>',
+                          'li requires explicitly nested flow content')
+
+    def test_r6_immutable_subset_status(self):
+        # Report the supplied conflict, never silently exempt it or alter HTML.
+        for name in [n for n in common.HTML_PAGES if n != 'index.html']:
+            self.assertEqual(common.read_page(SOURCE / name).errors, [])
+        self.assertEqual(common.read_page(SOURCE / 'index.html').errors, [])
+
+    def test_r6_codeowners_discovery(self):
+        shutil.copytree(SOURCE, self.root, dirs_exist_ok=True)
+        self.assertTrue((self.root / '.github/CODEOWNERS').is_file())
+        self.assertEqual(common.discovery_errors(self.root), [])
+        result = self.cli('site_common.py')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_r6_li_flow(self):
+        self.strict_error('<ul><li><meta charset="utf-8"></li></ul>', 'li requires explicitly nested flow content')
+
+    def test_r6_nested_anchor(self):
+        self.strict_error('<a href="#main"><span><a href="#main">x</a></span></a>', 'nested anchors forbidden')
+
+    def test_r6_flow_models(self):
+        self.strict_error('<div><title>x</title></div>', 'flow content required')
+        self.strict_error('<meta name="description" content="x">', 'flow content required')
+
+    def test_r6_title_rcdata(self):
+        self.assertIn('HTML title must contain text only', '\n'.join(
+            self.strict_page(head='<title><span>text</span></title>').errors))
+        self.assertFalse(self.strict_page(head='<title>text &lt;span&gt;</title>').errors)
+
+    def test_r6_svg_integration(self):
+        for tag in ['title', 'desc', 'text']:
+            self.strict_error('<svg><' + tag + '><circle/></' + tag + '></svg>',
+                              'SVG title/desc/text must contain text only')
+        self.assertFalse(self.strict_page('<svg><title>label</title><desc>description</desc>'
+                                         '<text>&lt;text&gt;</text><g><circle/></g></svg>').errors)
+
+    def test_r6_attributes_quoted(self):
+        for body in ["<p class='x'>text</p>", '<p class=x>text</p>', '<p class>text</p>']:
+            self.strict_error(body, 'attribute values must be double-quoted')
+
+    def test_r6_attribute_separation(self):
+        self.strict_error('<a class="x"href="#main">x</a>', 'attributes must be separated by whitespace')
+
+    def test_r6_attribute_less_than(self):
+        self.strict_error('<p class="a<b">text</p>', 'literal < forbidden in attribute values')
+        self.assertFalse(self.strict_page('<p class="a&gt;b">text</p>').errors)
+
+    def test_r6_controls(self):
+        for code in list(range(32)) + list(range(127, 160)):
+            if code not in [9, 10, 13]:
+                self.strict_error('<p>a' + chr(code) + 'b</p>', 'NUL/control characters forbidden')
+        self.assertFalse(self.strict_page('<p>line\r\nnext\ttab</p>').errors)
+
+    def test_r6_references(self):
+        for ref in ['&apos;', '&#65;', '&#x41;', '&#0;', '&#10;', '&copy;', '&amp', '&bogus;', '&', '&ampersand']:
+            self.strict_error('<p>' + ref + '</p>', 'forbidden HTML character reference')
+        page = self.strict_page('<p>&amp;&lt;&gt;&quot;&#39;</p>')
+        self.assertFalse(page.errors)
+        p = next(n for n in page.nodes if n.tag == 'p')
+        self.assertEqual(p.children, ['&<>"' + "'"])
+        self.assertEqual(common.HTML_REFERENCES, {'&amp;', '&lt;', '&gt;', '&quot;', '&#39;'})
+
+    def test_r6_charset(self):
+        self.edit('privacy.html', 'charset="utf-8"', 'charset="shift_jis"')
+        self.markup_error('first head element must be the unique byte-exact UTF-8 charset meta')
+
+    def test_r6_charset_sniff_window(self):
+        self.edit('privacy.html', '<head>', '<head>' + ' ' * 1024)
+        self.markup_error('UTF-8 charset declaration must finish within first 1024 bytes')
+
+    def test_r6_malformed_tokens(self):
+        for body, message in [('<p', 'malformed start tag'), ('<p @="x">', 'malformed attribute/start tag'),
+                              ('<p>2 < 3</p>', 'malformed start tag'), ('</p x>', 'malformed end tag')]:
+            self.strict_error(body, message)
+
+    def test_r6_utf8_bytes(self):
+        p = self.root / 'privacy.html'
+        p.write_bytes(p.read_bytes() + b'\xff')
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            self.error(checker, 'invalid UTF-8 document bytes')
+
+    def test_r6_document_whitespace(self):
+        page = self.strict_page('<p>a\r\nb</p>')
+        self.assertFalse(page.errors)
+        # Browser insertion modes ignore leading layout whitespace and move
+        # trailing whitespace into body; compare the actual resulting tree.
+        source = '<!doctype html>\n<html lang="en-GB">\n<head><meta charset="utf-8">' + \
+                 '<meta http-equiv="Content-Security-Policy" content="' + allowlist.CSP + \
+                 '"></head>\n<body><p>x</p></body>\n</html>\n'
+        page = common.Page(source)
+        self.assertFalse(page.errors)
+        self.assertEqual(len(page.root.children), 1)
+        html = page.root.children[0]
+        self.assertEqual([c.tag if isinstance(c, common.Node) else c for c in html.children],
+                         ['head', '\n', 'body'])
+        self.assertEqual(html.children[-1].children[-1], '\n\n')
+
+    def test_r5_csp_keyword(self):
+        for keyword in [' Content-Security-Policy ', 'Content-Security-Policy ',
+                        ' Content-Security-Policy', 'content-security-policy',
+                        'CONTENT-SECURITY-POLICY', 'Content-Security-Polic&#121;']:
+            (self.root / 'privacy.html').write_bytes((SOURCE / 'privacy.html').read_bytes())
+            self.edit('privacy.html', 'http-equiv="Content-Security-Policy"',
+                      'http-equiv="' + keyword + '"')
+            for checker in [resources.check, privacy.check, links.check, invariants.check]:
+                self.error(checker, 'http-equiv must be byte-exact')
+
+    def test_r5_shadow_template(self):
+        self.edit('privacy.html', '<body>', '<body><template shadowrootmode="open">'
+                  '<p>Certified secure GDPR compliant</p></template>')
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            self.error(checker, 'forbidden <template> element (markup allowlist)')
+
+    def test_r5_extra_stylesheet_index(self):
+        self.extra_stylesheet('index.html')
+
+    def test_r5_extra_stylesheet_404(self):
+        self.extra_stylesheet('404.html')
+
+    def extra_stylesheet(self, name):
+        (self.root / 'hide.css').write_text('footer { display: none; }')
+        self.edit(name, '</head>', '<link rel="stylesheet" href="/hide.css"></head>')
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            self.error(checker, 'expected exactly one stylesheet on every page')
+
+    def test_r5_body_background(self):
+        self.edit('privacy.html', '<body>', '<body background="' + privacy.ICO + '">')
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            self.error(checker, 'forbidden attribute background on <body> (markup allowlist)')
+
+    def test_r5_table_background(self):
+        self.body('<table background="' + privacy.ICO + '"><tr><td>Test</td></tr></table>',
+                  'privacy.html')
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            self.error(checker, 'forbidden <table> element (markup allowlist)')
+            self.error(checker, 'forbidden attribute background on <table> (markup allowlist)')
+
+    def test_r5_unknown_element(self):
+        # Generated names ensure the policy fails closed beyond known probes.
+        import random
+        name = 'probe' + ''.join(random.Random(501).choices('abcdefghijklmnopqrstuvwxyz', k=16))
+        self.body('<' + name + '>Test</' + name + '>', 'privacy.html')
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            self.error(checker, 'forbidden <' + name + '> element (markup allowlist)')
+
+    def test_r5_unknown_attribute(self):
+        import random
+        name = 'probe' + ''.join(random.Random(502).choices('abcdefghijklmnopqrstuvwxyz', k=16))
+        self.body('<p ' + name + '="value">Test</p>', 'privacy.html')
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            self.error(checker, 'forbidden attribute ' + name + ' on <p> (markup allowlist)')
+
+    def test_r5_all_forbidden_elements(self):
+        for tag in ['template', 'slot', 'iframe', 'object', 'embed', 'script', 'noscript',
+                    'base', 'form', 'input', 'table', 'td', 'th', 'font', 'marquee',
+                    'style', 'dialog', 'my-widget']:
+            for position in ['head', 'body']:
+                (self.root / 'privacy.html').write_bytes((SOURCE / 'privacy.html').read_bytes())
+                self.edit('privacy.html', '</' + position + '>',
+                          '<' + tag + '></' + tag + '></' + position + '>')
+                self.markup_error('forbidden <' + tag + '> element (markup allowlist)')
+        self.assertIn('forbidden <unknown> element (markup allowlist)',
+                      '\n'.join(common.Page('</unknown>').errors))
+
+    def test_r5_all_forbidden_attributes(self):
+        for key in ['background', 'shadowrootmode', 'shadowroot', 'popover', 'hidden',
+                    'inert', 'style', 'onclick', 'onanything', 'srcset', 'slot', 'is',
+                    'nonce', 'data-future', 'class', 'href']:
+            (self.root / 'privacy.html').write_bytes((SOURCE / 'privacy.html').read_bytes())
+            self.edit('privacy.html', '<body>', '<body ' + key + '="value">')
+            self.markup_error('forbidden attribute ' + key + ' on <body> (markup allowlist)')
+        # An attribute approved on one element is not global permission.
+        self.body('<p href="#main">Test</p>', 'privacy.html')
+        self.markup_error('forbidden attribute href on <p> (markup allowlist)')
+
+    def test_r5_svg_per_element_attributes(self):
+        self.body('<svg><rect width="1" height="1"/></svg>', 'privacy.html')
+        for name in ['privacy.html', 'coami-icon.svg']:
+            self.edit(name, '<rect ', '<rect cx="1" ')
+            self.markup_error('forbidden attribute cx on <rect> (markup allowlist)', name)
+
+    def test_r5_allowlist_derivation(self):
+        actual = {}
+        for name in common.HTML_PAGES:
+            for node in common.read_page(SOURCE / name).nodes:
+                if not any(n.tag == 'svg' for n in node.ancestors()):
+                    actual.setdefault(node.tag, set()).update(node.attr)
+        # Optional dimensions are approved for images, although the header is
+        # sized by CSS height and its intrinsic SVG aspect ratio.
+        actual['img'].update({'width', 'height'})
+        actual['h2'].add('class')  # retained v4 vocabulary
+        self.assertEqual(actual, allowlist.HTML_ATTRIBUTES)
+        # r4's permitted SVG elements remain available with no new attributes.
+        for tag in allowlist.SVG_ELEMENTS:
+            self.assertEqual(common.SVGPage('<svg xmlns="http://www.w3.org/2000/svg"><'
+                                           + tag + '/></svg>').errors, [])
+
+    def test_r5_csp_content_shared(self):
+        self.edit('privacy.html', allowlist.CSP, allowlist.CSP + ';')
+        self.markup_error('Markup allowlist: CSP content must be byte-exact ASCII policy')
+
+    def test_r5_csp_count_shared(self):
+        text = (self.root / 'privacy.html').read_text()
+        csp = next(line for line in text.splitlines() if 'Content-Security-Policy' in line)
+        for replacement in ['', csp + csp]:
+            (self.root / 'privacy.html').write_text(text.replace(csp, replacement))
+            self.markup_error('Markup allowlist: expected exactly one CSP meta')
+
+    def test_r5_referrer_value(self):
+        original = (self.root / 'privacy.html').read_text()
+        for value in [' no-referrer', 'no-referrer ', 'NO-REFERRER', 'no-referr&#101;r']:
+            (self.root / 'privacy.html').write_text(original.replace('content="no-referrer"',
+                                                                    'content="' + value + '"'))
+            self.markup_error('Markup allowlist: referrer must be byte-exact no-referrer')
+
+    def test_r5_referrer_count(self):
+        original = (self.root / 'privacy.html').read_text()
+        meta = '<meta name="referrer" content="no-referrer">'
+        for replacement in ['', meta + meta]:
+            (self.root / 'privacy.html').write_text(original.replace(meta, replacement))
+            self.markup_error('Markup allowlist: expected exactly one referrer meta')
+
+    def test_r5_link_rel(self):
+        original = (self.root / 'privacy.html').read_text()
+        for rel in [' stylesheet', 'stylesheet ', 'STYLESHEET', 'alternate', 'icon stylesheet']:
+            (self.root / 'privacy.html').write_text(original.replace('rel="stylesheet"',
+                                                                    'rel="' + rel + '"'))
+            self.markup_error('Markup allowlist: link rel must be byte-exact stylesheet or icon')
+
+    def test_r5_stylesheet_target(self):
+        original = (self.root / 'privacy.html').read_text()
+        for href in [allowlist.STYLESHEET + ' ', ' ' + allowlist.STYLESHEET,
+                     allowlist.STYLESHEET.upper(), 'other.css']:
+            (self.root / 'privacy.html').write_text(original.replace('href="' + allowlist.STYLESHEET + '"',
+                                                                    'href="' + href + '"'))
+            self.markup_error('Markup allowlist: stylesheet href must be byte-exact')
+
+    def test_r5_stylesheet_missing(self):
+        self.edit('privacy.html', '<link rel="stylesheet" href="' + allowlist.STYLESHEET + '">', '')
+        self.markup_error('Markup allowlist: expected exactly one stylesheet on every page')
+
+    def test_r5_icon_target(self):
+        self.edit('privacy.html', 'href="' + allowlist.FAVICON + '"', 'href="other.svg"')
+        self.markup_error('Markup allowlist: icon href must be byte-exact')
+
+    def test_r5_html_lang(self):
+        original = (self.root / 'privacy.html').read_text()
+        for value in ['en-gb', 'EN-GB', ' en-GB', 'en-GB ', 'en-G&#66;']:
+            (self.root / 'privacy.html').write_text(original.replace('lang="en-GB"', 'lang="' + value + '"'))
+            self.markup_error('Markup allowlist: html lang must be byte-exact en-GB')
+
+    def test_r5_raw_attribute_bytes(self):
+        # Decoding cannot replace the required literal attribute spelling.
+        self.edit('privacy.html', 'rel="stylesheet"', 'rel="styleshe&#101;t"')
+        self.markup_error('Markup allowlist: link rel must be byte-exact stylesheet or icon')
+
+    def test_r5_complete_tree_commands(self):
+        shutil.copytree(SOURCE, self.root, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns('.git'))  # fixture history only
+        self.assertTrue((self.root / '.github/CODEOWNERS').is_file())
+        for script in ['site_common.py', 'check_links.py', 'check_no_third_party.py',
+                       'check_privacy_text.py', 'check_invariants.py']:
+            with self.subTest(script=script):
+                result = self.cli(script)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Exercise the real authors command using isolated synthetic history.
+        env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+                   GIT_AUTHOR_NAME='Fixture', GIT_COMMITTER_NAME='Fixture',
+                   GIT_AUTHOR_EMAIL='noreply@github.com', GIT_COMMITTER_EMAIL='noreply@github.com')
+        for args in [['init', '--quiet'], ['-c', 'core.hooksPath=/dev/null', 'commit',
+                                         '--quiet', '--allow-empty', '-m', 'fixture']]:
+            subprocess.run(['git', *args], cwd=self.root, env=env, check=True, capture_output=True)
+        result = subprocess.run([sys.executable, '-I', '-B', str(SOURCE / 'scripts/check_authors.py'),
+                                 '--root', str(self.root), '--', 'HEAD'], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # All seven matrix entrypoints must pass discovery and markup preflight.
+        # npm/browser boundaries and the recursive suite call are recorded only;
+        # the Python content commands and authors command above execute for real.
+        with patch.object(ci_checks, 'run') as run, patch.object(ci_checks, 'accessibility'), \
+                patch.dict(os.environ, EVENT_NAME='push', BEFORE='0' * 40, AFTER='HEAD'):
+            for kind in ['html', 'a11y', 'links', 'no-third-party', 'authors', 'privacy-text', 'invariants']:
+                with patch.object(sys, 'argv', ['ci_checks.py', '--root', str(self.root), '--', kind]):
+                    self.assertEqual(ci_checks.main(), 0, kind)
+            self.assertEqual(run.call_count, 8)
+
+    def test_r5_unknown_github_file(self):
+        shutil.copytree(SOURCE, self.root, dirs_exist_ok=True)
+        for name in ['extra', 'extra.txt', 'CODEOWNERS.bak', 'workflows/extra.yml']:
+            target = self.root / '.github' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('unknown')
+            for script in ['site_common.py', 'check_links.py', 'check_no_third_party.py',
+                           'check_privacy_text.py', 'check_invariants.py']:
+                result = self.cli(script)
+                self.assertEqual(result.returncode, 1, (name, script, result.stdout, result.stderr))
+                self.assertIn(b'Unsupported .github file', result.stdout + result.stderr)
+            with patch.object(sys, 'argv', ['ci_checks.py', '--root', str(self.root), '--', 'html']), \
+                    patch.object(ci_checks, 'run') as run, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ci_checks.main(), 1)
+                run.assert_not_called()
+            target.unlink()
+        for name in ['CODEOWNERS', 'nested/.github/CODEOWNERS']:
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('unknown')
+            self.assertTrue(common.discovery_errors(self.root))
+            target.unlink()
+
+    def test_all_document_suffixes_and_no_exclusions(self):
+        for parent in ['scripts/fixtures', '.github', 'node_modules', '.venv', 'nested', 'legal']:
+            for suffix in ['.HTML', '.htm', '.XHTML', '.SVG']:
+                with self.subTest(parent=parent, suffix=suffix):
+                    p = self.root / parent / ('extra' + suffix)
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text('<script/>')
+                    self.assertIn(p, common.site_files(self.root))
+                    self.error(resources.check, 'Unexpected document')
+                    p.unlink()
+        git = self.root / '.git'
+        git.mkdir()
+        (git / 'ignored.HTML').write_text('<script/>')
+        self.assertEqual(common.discovery_errors(self.root), [])
+
+    def test_missing_document(self):
+        (self.root / '404.html').unlink()
+        self.error(resources.check, 'Missing document: 404.html')
+
+    def test_unsupported_types(self):
+        for suffix in ['.xml', '.pdf', '.js', '.woff2', '.mhtml', '.png', '.unknown']:
+            p = self.root / ('extra' + suffix)
+            p.write_text('fixture')
+            self.error(resources.check, 'Unsupported served file type')
+            p.unlink()
+
+    def test_raw_markdown_and_nojekyll_discovery(self):
+        p = self.root / 'raw.md'
+        p.write_text('# Raw, not rendered')
+        self.assertNotIn(p, common.site_files(self.root))
+        (self.root / '.nojekyll').unlink()
+        self.assertIn(p, common.site_files(self.root))
+        self.error(resources.check, 'Unexpected document')
+
+    def test_symlink(self):
+        (self.root / 'alias.txt').symlink_to('index.html')
+        self.error(resources.check, 'Unsupported symlink')
+
+    def test_option_injection_filename(self):
+        p = self.root / '--version\nprobe.html'
+        p.write_text('<script/>')
+        self.error(resources.check, 'Unsafe served path')
+        result = self.cli('site_common.py')
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, b'')
+        p.unlink()
+        for name in ['space name.html', 'unicodé.html', 'control\x01.html']:
+            p = self.root / name
+            p.write_text('fixture')
+            self.error(resources.check, 'Unsafe served path')
+            p.unlink()
+
+    def cli(self, script, *args):
+        return subprocess.run([sys.executable, '-I', '-B', str(SOURCE / 'scripts' / script),
+                               *args, '--', str(self.root)], capture_output=True)
+
+    def test_discovery_nul_and_prefix(self):
+        result = self.cli('site_common.py')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, b''.join(('./' + name).encode() + b'\0'
+                         for name in sorted(common.EXPECTED_DOCUMENTS)))
+
+    def test_svg_is_checked(self):
+        self.edit('coami-icon.svg', '</svg>', '<script/></svg>')
+        self.error(resources.check, 'forbidden <script>')
+
+    def test_svg_xml_vectors(self):
+        self.edit('coami-icon.svg', '<svg ', '<?xml-stylesheet href="https://evil.test/a.css"?><svg ')
+        self.error(resources.check, 'forbidden XML processing instruction')
+        for tag in ['svg:script', 'animate', 'set']:
+            (self.root / 'coami-icon.svg').write_text((SOURCE / 'coami-icon.svg').read_text())
+            self.edit('coami-icon.svg', '</svg>', '<' + tag + '/></svg>')
+            self.error(resources.check, 'invalid SVG XML' if ':' in tag else 'forbidden <' + tag)
+
+    def test_csp_exact_ascii(self):
+        for content in [resources.CSP.replace(' ', '\u00a0'),
+                        '; '.join(reversed(resources.CSP.split('; '))),
+                        resources.CSP + ';', resources.CSP.replace("'", '&#39;'), "default-src 'none'"]:
+            original = (SOURCE / 'index.html').read_text()
+            (self.root / 'index.html').write_text(original.replace(resources.CSP, content))
+            self.error(resources.check, 'byte-exact ASCII policy')
+
+    def test_csp_template_noscript_and_body(self):
+        for wrapper in ['template', 'noscript', 'div']:
+            original = (SOURCE / 'index.html').read_text()
+            tag = next(line for line in original.splitlines() if 'Content-Security-Policy' in line)
+            (self.root / 'index.html').write_text(original.replace(tag, f'<{wrapper}>{tag}</{wrapper}>'))
+            self.error(resources.check, 'CSP must be active')
+        original = (SOURCE / 'index.html').read_text()
+        tag = next(line for line in original.splitlines() if 'Content-Security-Policy' in line)
+        (self.root / 'index.html').write_text(original.replace(tag, '').replace('<body>', '<body>' + tag))
+        self.error(resources.check, 'CSP must be active')
+
+    def test_csp_in_inactive_head(self):
+        original = (SOURCE / 'index.html').read_text()
+        for opening, closing in [('<template><head>', '</head></template>'),
+                                 ('<noscript><head>', '</head></noscript>'),
+                                 ('<body><head>', '</head></body>')]:
+            (self.root / 'index.html').write_text(original.replace('<head>', opening).replace('</head>', closing))
+            self.error(resources.check, 'CSP must be active')
+
+    def test_csp_two_or_missing(self):
+        original = (SOURCE / 'index.html').read_text()
+        tag = next(line for line in original.splitlines() if 'Content-Security-Policy' in line)
+        for replacement in ['', tag + tag]:
+            (self.root / 'index.html').write_text(original.replace(tag, replacement))
+            self.error(resources.check, 'exactly one CSP')
+
+    def test_csp_duplicate_content(self):
+        self.edit('index.html', 'content="' + resources.CSP + '"',
+                  'content="' + resources.CSP + '" content="' + resources.CSP + '"')
+        self.error(resources.check, 'byte-exact ASCII policy')
+
+    def test_csp_after_stylesheet(self):
+        self.edit('index.html', '<meta http-equiv="Content-Security-Policy"',
+                  '<link rel="stylesheet" href="style.css"><meta http-equiv="Content-Security-Policy"')
+        self.error(resources.check, 'CSP must be active')
+
+    def test_all_refresh_rejected(self):
+        for delay in ['.0;url=', '0..;url=', '0;url=', '0, URL=', '']:
+            original = (SOURCE / 'index.html').read_text()
+            (self.root / 'index.html').write_text(original.replace('</head>',
+                f'<meta http-equiv="refresh" content="{delay}https://external.example/"></head>'))
+            self.error(resources.check, 'forbidden meta refresh')
+        self.edit('index.html', 'https://external.example/', '/privacy.html')
+        self.error(resources.check, 'forbidden meta refresh')
+
+    def test_exact_navigation_origins(self):
+        for url in ['https://coami.ai:444/', 'https://coami.ai/', '//ico.org.uk/make-a-complaint/',
+                    'http://ico.org.uk/make-a-complaint/', 'https://ico.org.uk:444/make-a-complaint/',
+                    'https://ico.org.uk:443/make-a-complaint/', 'https://ico.org.uk.evil/',
+                    'https://ico.org.uk@evil.test/', 'https://elsewhere.test/',
+                    'mailto:other@coami.ai', 'javascript:alert(1)', 'https:&#10;//evil.test/',
+                    r'\\evil.test/']:
+            original = (SOURCE / 'index.html').read_text()
+            (self.root / 'index.html').write_text(original.replace('</body>', f'<a href="{url}">Test</a></body>'))
+            self.error(resources.check, 'forbidden navigation URL')
+        for url in resources.ABSOLUTE_LINKS:
+            self.assertTrue(resources.navigation_allowed(url))
+        for url in ['#main', '/privacy.html', 'privacy.html', '/?a=b#main']:
+            self.assertTrue(resources.navigation_allowed(url))
+
+    def test_resource_absolute_urls(self):
+        for tag in ['<img src="{}">', '<link href="{}">', '<input action="{}">', '<img data="{}">']:
+            for url in ['https://coami.ai/a', '//evil.test/a', 'data:image/png,x',
+                        'https:&#10;//evil.test/a', r'\\evil.test/a']:
+                (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+                self.body(tag.format(url))
+                self.error(resources.check, 'forbidden resource URL')
+
+    def test_svg_image_href(self):
+        for attr in ['href', 'xlink:href']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(f'<svg><image {attr}="local.png"/></svg>')
+            self.error(resources.check, 'forbidden SVG image reference')
+
+    def test_svg_use_off_document(self):
+        for attr in ['href', 'xlink:href']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(f'<svg><use {attr}="other.svg#id"/></svg>')
+            self.error(resources.check, 'forbidden off-document SVG use')
+        (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+        self.body('<svg><use href="#main"/></svg>')
+        self.error(resources.check, 'forbidden off-document SVG use')
+
+    def test_r4_dtd_entities(self):
+        for replacement in ['<script xmlns="http://www.w3.org/2000/svg">alert(1)</script>',
+                            '<image xmlns="http://www.w3.org/2000/svg" href="https://evil.test/x"/>']:
+            document = ('<!DOCTYPE svg [<!ENTITY payload \'' + replacement + '\'>]>'
+                        '<svg xmlns="http://www.w3.org/2000/svg">&payload;</svg>')
+            (self.root / 'coami-icon.svg').write_text(document)
+            self.error(resources.check, 'forbidden DTD/entity declaration')
+            self.error(resources.check, 'invalid SVG XML')
+        for value in ['<!DOCTYPE html [<!ENTITY payload "text">]>', '<!ENTITY payload "text">']:
+            self.assertIn('forbidden DTD/entity declaration', common.Page(value).errors)
+
+    def test_r4_xml_parser_refuses_dtd(self):
+        # Exercise the parser itself, independently of the lexical preflight.
+        with self.assertRaisesRegex(ValueError, 'forbidden DTD/entity declaration'):
+            ET.fromstring('<!DOCTYPE svg [<!ENTITY x "expanded">]><svg>&x;</svg>',
+                          parser=ET.XMLParser(target=common.NoDTDTreeBuilder()))
+
+    def test_r4_entities_html_and_svg(self):
+        for entity in ['&nbsp;', '&copy;', '&payload;', '&#xnothex;', '&amp']:
+            for name in ['index.html', 'coami-icon.svg']:
+                (self.root / name).write_text((SOURCE / name).read_text())
+                end = '</svg>' if name.endswith('.svg') else '</body>'
+                self.edit(name, end, entity + end)
+                self.error(resources.check, 'forbidden entity reference')
+        self.assertEqual(common.markup_errors('&amp; &lt; &gt; &apos; &quot; &#65; &#x41;'), [])
+        page = common.SVGPage('<svg xmlns="http://www.w3.org/2000/svg"><text>'
+                              '&amp;&lt;&gt;&apos;&quot;&#65;&#x41;</text></svg>')
+        self.assertEqual(page.errors, [])
+
+    def test_r4_svg_xml_well_formed(self):
+        for text in ['<svg xmlns="http://www.w3.org/2000/svg"><rect></svg>',
+                     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="x" viewBox="y"/>',
+                     '<svg xmlns="http://www.w3.org/2000/svg"/><svg/>']:
+            (self.root / 'coami-icon.svg').write_text(text)
+            self.error(resources.check, 'invalid SVG XML')
+
+    def test_r4_svg_duplicate_attribute_case(self):
+        page = common.SVGPage('<svg xmlns="http://www.w3.org/2000/svg" fill="red" FILL="blue"/>')
+        self.assertIn('duplicate attribute name in SVG', page.errors)
+
+    def test_r4_svg_xml_allowlist(self):
+        for text, diagnostic in [
+                ('<SVG/>', 'SVG root must be svg'),
+                ('<svg xmlns="http://www.w3.org/2000/svg"><a/></svg>', 'forbidden <a> SVG element'),
+                ('<svg xmlns="http://www.w3.org/2000/svg"><RECT/></svg>', 'forbidden <rect> SVG element'),
+                ('<svg xmlns="http://www.w3.org/2000/svg"><g xmlns="urn:other"/></svg>', 'SVG element'),
+                ('<svg xmlns="http://www.w3.org/2000/svg" unknown="x"/>', 'forbidden SVG attribute'),
+                ('<svg xmlns="http://www.w3.org/2000/svg" FILL="red"/>', 'forbidden SVG attribute')]:
+            with self.subTest(text=text):
+                self.assertIn(diagnostic, '\n'.join(common.SVGPage(text).errors))
+
+    def test_r4_inline_svg_allowlist(self):
+        self.body('<svg><a/></svg>')
+        self.error(resources.check, 'forbidden <a> SVG element')
+        self.body('<svg mystery="x"></svg>')
+        self.error(resources.check, 'forbidden SVG attribute mystery')
+
+    def test_r4_svg_resource_elements(self):
+        for tag in ['image', 'feImage', 'use', 'foreignObject', 'script', 'animate', 'animateColor', 'set']:
+            for key in ['href', 'xlink:href']:
+                for url in ['https://ico.org.uk/make-a-complaint/', '#local']:
+                    for name in ['index.html', 'coami-icon.svg']:
+                        (self.root / name).write_text((SOURCE / name).read_text())
+                        element = f'<{tag} {key}="{url}"/>'
+                        if name.endswith('.svg'):
+                            self.edit(name, '<svg ', '<svg xmlns:xlink="http://www.w3.org/1999/xlink" ')
+                            self.edit(name, '</svg>', element + '</svg>')
+                        else:
+                            self.body('<svg>' + element + '</svg>')
+                        self.error(resources.check, 'forbidden <' + tag.lower())
+
+    def test_r4_non_navigation_hrefs(self):
+        for element in ['<div href="{}"></div>', '<p xlink:href="{}"></p>',
+                        '<svg><g href="{}"/></svg>', '<svg><g src="{}"/></svg>']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(element.format(privacy.ICO))
+            self.error(resources.check, 'forbidden resource URL')
+        self.assertTrue(resources.navigation_allowed(privacy.ICO))
+
+    def test_r4_attribute_urls(self):
+        for value in ['url(https://evil.test/x)', "url('https://ico.org.uk/make-a-complaint/')",
+                      r'u\72l(//evil.test/x)', 'u/**/rl(https://evil.test/x)']:
+            for name, tag in [('coami-icon.svg', '<circle fill="{}"/>'),
+                              ('index.html', '<svg><circle fill="{}"/></svg>'),
+                              ('index.html', '<p data-paint="{}">text</p>')]:
+                (self.root / name).write_text((SOURCE / name).read_text())
+                end = '</svg>' if name.endswith('.svg') else '</body>'
+                self.edit(name, end, tag.format(value) + end)
+                self.error(resources.check, 'forbidden CSS resource vector in attribute')
+
+    def test_r4_duplicate_attributes(self):
+        for name in common.HTML_PAGES:
+            for old, new in [
+                    ('http-equiv="Content-Security-Policy"',
+                     'http-equiv="content-type" HTTP-EQUIV="Content-Security-Policy"'),
+                    ('content="' + resources.CSP + '"',
+                     'content="' + resources.CSP + '" CONTENT="' + resources.CSP + '"'),
+                    ('<body>', '<body id="one" ID="two">')]:
+                (self.root / name).write_text((SOURCE / name).read_text())
+                self.edit(name, old, new)
+                self.error(resources.check, 'duplicate attribute name')
+
+    def test_r4_markup_all_checkers(self):
+        self.edit('privacy.html', '<body>', '<body id="first" ID="second">')
+        for checker in [resources.check, privacy.check, links.check, invariants.check]:
+            with self.subTest(checker=checker.__module__):
+                self.error(checker, 'duplicate attribute name')
+
+    def test_r4_validator_directives(self):
+        for directive in ['[html-validate-disable-next no-dup-attr,attribute-allowed-values]',
+                          'HTML-VALIDATE disable', 'h t m l - v a l i d a t e-disable',
+                          'eslint-disable', 'pa11y ignore', 'axe-disable']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body('<!-- ' + directive + ' -->')
+            self.error(resources.check, 'forbidden inline validator directive')
+        # Round 6 deliberately replaces r4's ordinary-comment permission.
+        self.assertIn('comments/marked sections forbidden', '\n'.join(
+            common.Page('<!-- ordinary comment -->').errors))
+
+    def test_r4_ci_markup_preflight(self):
+        self.body('<!-- [html-validate-disable-next no-dup-attr] -->')
+        with patch.object(sys, 'argv', ['ci_checks.py', '--root', str(self.root), '--', 'html']), \
+                patch.object(ci_checks, 'run') as run, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ci_checks.main(), 1)
+        run.assert_not_called()
+
+    def test_r4_privacy_visibility(self):
+        for old in ['<main id="main" tabindex="-1"', '<body', '<article class="legal text"', '<p class="meta"']:
+            for attr in ['popover', 'hidden', 'inert', 'aria-hidden="false"', 'style=""']:
+                (self.root / 'privacy.html').write_text((SOURCE / 'privacy.html').read_text())
+                self.edit('privacy.html', old + '>', old + ' ' + attr + '>')
+                self.error(privacy.check, 'Privacy notice visibility')
+
+    def test_r4_footer_visibility(self):
+        for name in common.HTML_PAGES:
+            for old in ['<footer class="site"', '<body', '<html lang="en-GB"']:
+                for attr in ['popover', 'hidden', 'inert', 'aria-hidden="false"', 'style=""']:
+                    (self.root / name).write_text((SOURCE / name).read_text())
+                    self.edit(name, old + '>', old + ' ' + attr + '>')
+                    self.assertTrue(invariants.check(self.root), (name, old, attr))
+            (self.root / name).write_text((SOURCE / name).read_text())
+            self.edit(name, '<footer class="site">', '<footer class="site skip">')
+            self.error(invariants.check, 'Legal footer visibility class placement')
+
+    def test_r4_visibility_attributes_guard(self):
+        # aria-hidden=false is forbidden by Legal even though hidden() is false.
+        page = common.Page('<html><body><footer class="site" aria-hidden="false"></footer></body></html>')
+        footer = next(n for n in page.nodes if n.tag == 'footer')
+        self.assertIn('Legal footer visibility is not approved', '\n'.join(
+            visibility.visibility_errors(page, 'index.html', footer, 'Legal footer')))
+
+    def test_r4_class_placement(self):
+        for old, new in [('<main id="main" tabindex="-1">', '<main id="main" class="meta">'),
+                         ('<body>', '<body class="wrap">'),
+                         ('<p class="meta">', '<p class="plain">'),
+                         ('<article class="legal text">', '<article class="meta">'),
+                         ('<p>This notice', '<p class="meta">This notice')]:
+            (self.root / 'privacy.html').write_text((SOURCE / 'privacy.html').read_text())
+            self.edit('privacy.html', old, new)
+            self.error(privacy.check, 'Privacy notice visibility class placement')
+
+    def test_r4_class_pins_match_approved_pages(self):
+        for name in common.HTML_PAGES:
+            page = common.Page((SOURCE / name).read_text())
+            protected = [n for n in page.nodes if n.tag == 'footer' or
+                         (name == 'privacy.html' and n.tag == 'main')]
+            nodes = {n for element in protected for n in page.nodes
+                     if element in n.ancestors() or n in element.ancestors()}
+            actual = {visibility.node_path(n): tuple(n.attr['class'].split())
+                      for n in nodes if n.attr.get('class')}
+            self.assertEqual(actual, visibility.LEGAL_CLASSES[name])
+
+    def test_r4_github_privacy_href(self):
+        self.edit('privacy.html', privacy.GITHUB_PRIVACY, '/index.html')
+        self.error(privacy.check, 'privacy statement link href')
+
+    def test_r4_banned_metadata(self):
+        for old, new in [
+                ('<title>', '<title>Certified secure GDPR compliant '),
+                ('name="description" content="', 'name="description" content="Certified secure GDPR compliant '),
+                ('</head>', '<meta name="OG:description" content="Certified secure GDPR compliant"></head>'),
+                ('</head>', '<meta name="twitter:title" content="Certified secure GDPR compliant"></head>'),
+                ('</head>', '<meta property="og:title" content="Certified secure GDPR compliant"></head>'),
+                ('</head>', '<meta property="TWITTER:description" content="Certified secure GDPR compliant"></head>'),
+                ('<body>', '<body title="Certified secure GDPR compliant">'),
+                ('<body>', '<body aria-label="Certified secure GDPR compliant">'),
+                ('</body>', '<img alt="Certified secure GDPR compliant"></body>')]:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.edit('index.html', old, new)
+            self.error(invariants.check, 'banned public metadata/attribute copy')
+
+    def test_css_resource_vectors(self):
+        for rule in ['a{background:image-set("local.png" 1x)}',
+                     'a{background:-webkit-image-set("https://evil.test/x" 1x)}',
+                     'a{background:url(local.png)}', '@import "local.css";',
+                     r'a{background:u\72l(local.png)}', r'@im\70ort "local.css";',
+                     'a{background:u/**/rl(local.png)}']:
+            (self.root / 'style.css').write_text(rule)
+            self.error(resources.check, 'forbidden CSS resource vector')
+
+    def test_inline_css_resource_vectors(self):
+        for value in ['<style>a{background:url(local.png)}</style>',
+                      '<p style="background:image-set(\'local.png\' 1x)">Test</p>']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(value)
+            self.error(resources.check, 'forbidden CSS resource vector')
+
+    def test_srcset_poster_ping(self):
+        for attr in ['srcset', 'poster', 'ping']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(f'<a {attr}="local.png">Test</a>')
+            self.error(resources.check, f'forbidden resource vector {attr}')
+
+    def test_link_resource_hints(self):
+        for rel in ['preload', 'prefetch', 'preconnect', 'dns-prefetch', 'modulepreload', 'manifest']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(f'<link rel="alternate {rel.upper()}" href="/index.html">')
+            self.error(resources.check, 'forbidden link resource hint')
+
+    def test_event_handlers(self):
+        for attr in ['onclick', 'onload', 'onerror', 'onanimationstart', 'ONFOCUS']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(f'<p {attr}="">Test</p>')
+            self.error(resources.check, 'forbidden attribute')
+
+    def test_static_content(self):
+        for tag in ['script', 'iframe', 'embed', 'object', 'form', 'style', 'base', 'foreignObject']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(f'<{tag}></{tag}>')
+            self.error(resources.check, 'forbidden <' + tag.lower())
+        self.body('<p style="">Test</p>')
+        self.error(resources.check, 'forbidden attribute style')
+
+    def test_links_and_fragments(self):
+        self.body('<a href="/privacy.html#absent">Bad</a>')
+        self.error(links.check, 'missing fragment')
+        self.body('<a href="missing.html">Bad</a>')
+        self.error(links.check, 'missing file')
+        self.body('<a href="%2e%2e/outside.html">Bad</a>')
+        self.error(links.check, 'path leaves repository')
+        self.body('<a href="mailto:">Bad</a>')
+        self.error(links.check, 'mailto needs an address')
+
+    def test_privacy_hidden_notice(self):
+        for old, new in [('<main id="main" tabindex="-1">', '<main id="main" hidden>'),
+                         ('<body>', '<body aria-hidden="true">'),
+                         ('<article class="legal text">', '<article class="legal text" inert>'),
+                         ('<main id="main" tabindex="-1">', '<main id="main" style="display:none">'),
+                         ('<article class="legal text">', '<article class="legal text invisible">'),
+                         ('<main id="main" tabindex="-1">', '<template><main id="main" tabindex="-1">'),
+                         ('<main id="main" tabindex="-1">', '<details><main id="main" tabindex="-1">'),
+                         ('<main id="main" tabindex="-1">', '<noscript><main id="main" tabindex="-1">')]:
+            (self.root / 'privacy.html').write_text((SOURCE / 'privacy.html').read_text())
+            self.edit('privacy.html', old, new)
+            self.error(privacy.check, 'Privacy notice visibility')
+
+    def test_privacy_css_visibility(self):
+        with (self.root / 'style.css').open('a') as f:
+            f.write('\n.legal{display:none}')
+        self.error(privacy.check, 'approved style.css hash')
+
+    def test_privacy_additional_stylesheet(self):
+        self.edit('privacy.html', '</head>', '<link rel="stylesheet" href="hide.css"></head>')
+        self.error(privacy.check, 'only the approved stylesheet')
+
+    def test_privacy_exact_text(self):
+        for old, new in [('no cookies', 'some cookies'), ("visitors' IP", 'visitors’ IP'),
+                         ('EU–US', 'EU-US')]:
+            (self.root / 'privacy.html').write_text((SOURCE / 'privacy.html').read_text())
+            self.edit('privacy.html', old, new)
+            self.error(privacy.check, 'Privacy visible text differs')
+
+    def test_privacy_extra_text(self):
+        self.body('<p>We also track visitors.</p>', 'privacy.html')
+        self.error(privacy.check, 'Extra visible text')
+
+    def test_privacy_header(self):
+        self.edit('privacy.html', '>About<', '>Other<')
+        self.error(privacy.check, 'Privacy header visible text')
+
+    def test_ico_href(self):
+        self.edit('privacy.html', privacy.ICO, 'https://ico.org.uk/')
+        self.error(privacy.check, 'ICO link href')
+
+    def test_stale_privacy_folder(self):
+        (self.root / 'privacy').mkdir()
+        (self.root / 'privacy/index.html').write_text((self.root / 'privacy.html').read_text())
+        self.edit('privacy.html', 'no cookies', 'some cookies')
+        self.error(privacy.check, 'Legacy privacy/ folder')
+        self.error(privacy.check, 'Privacy visible text differs')
+        self.error(invariants.check, 'Legacy privacy/ folder')
+        self.error(resources.check, 'Unexpected document')
+
+    def test_privacy_main_structure(self):
+        for old, new in [('<main id="main" tabindex="-1">', '<section id="main">'),
+                         ('</main>', ''), ('</main>', '</main><main></main>')]:
+            (self.root / 'privacy.html').write_text((SOURCE / 'privacy.html').read_text())
+            self.edit('privacy.html', old, new)
+            self.error(privacy.check, 'exactly one complete')
+
+    def test_d26_hash(self):
+        with (self.root / privacy.D26_PATH).open('a') as f:
+            f.write('\n')
+        self.error(privacy.check, 'D26 sha256 differs')
+
+    def test_cname(self):
+        for value in [b'attacker.example', b'coami.ai\n\n', b'coami.ai\r\n', b'coami.ai ']:
+            (self.root / 'CNAME').write_bytes(value)
+            self.error(invariants.check, 'CNAME must be exactly')
+        for value in [b'coami.ai', b'coami.ai\n']:
+            (self.root / 'CNAME').write_bytes(value)
+            self.assertEqual(invariants.check(self.root), [])
+        (self.root / 'CNAME').unlink()
+        self.error(invariants.check, 'CNAME must be exactly')
+
+    def test_nojekyll(self):
+        (self.root / '.nojekyll').write_text('not empty')
+        self.error(invariants.check, '.nojekyll must exist and be empty')
+        (self.root / '.nojekyll').unlink()
+        self.error(invariants.check, '.nojekyll must exist and be empty')
+
+    def test_legal_footer_every_page(self):
+        for name in common.HTML_PAGES:
+            p = self.root / name
+            before, footer = p.read_text().split('<footer', 1)
+            p.write_text(before + '<footer' + footer.replace('17310137', '00000000'))
+            self.error(invariants.check, name + ': Legal footer text')
+
+    def test_footer_links(self):
+        self.edit('404.html', '· <a href="privacy.html"', '· <a href="/index.html"')
+        self.error(invariants.check, 'Legal footer links must be exact')
+
+    def test_banned_copy(self):
+        for text in ['MFA', '2FA', 'TOTP', 'WebAuthn', 'OTP', 'secure', 'compliant',
+                     'GDPR', 'certified', 'UK-hosted', '®', 'Testimonials', '100 users']:
+            (self.root / 'index.html').write_text((SOURCE / 'index.html').read_text())
+            self.body(f'<p>{text}</p>')
+            self.error(invariants.check, 'banned visible copy')
+
+    def test_cli_isolated(self):
+        for name in ['site_common.py', 'ci_checks.py']:
+            result = self.cli(name, '--help')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ['check_links.py', 'check_no_third_party.py', 'check_privacy_text.py', 'check_invariants.py']:
+            result = self.cli(name)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.body('<script/>')
+        result = self.cli('check_no_third_party.py')
+        self.assertEqual(result.returncode, 1)
+
+
+class WorkflowTest(unittest.TestCase):
+    def setUp(self):
+        self.workflow = (SOURCE / '.github/workflows/site-checks.yml').read_text()
+        self.temp = tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR', tempfile.gettempdir()))
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / 'site').mkdir()
+        (self.root / 'base').mkdir()
+
+    def test_base_checkout_and_trust(self):
+        self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', self.workflow)
+        self.assertIn('path: base', self.workflow)
+        self.assertEqual(self.workflow.count('persist-credentials: false'), 2)
+        self.assertIn('checks="$GITHUB_WORKSPACE/base"', self.workflow)
+        self.assertIn('python3 -I -B "$CHECKS/scripts/ci_checks.py"', self.workflow)
+        self.assertNotIn('pull_request_target', self.workflow)
+        self.assertIn('contents: read', self.workflow)
+        for line in self.workflow.splitlines():
+            if 'uses:' in line:
+                self.assertRegex(line, r'actions/[a-z-]+@[0-9a-f]{40}\b')
+
+    def test_workflow_selection(self):
+        # Execute the actual workflow shell block, with no Git or network.
+        block = self.workflow.split('      - name: Select enforcement source\n', 1)[1]
+        block = block.split('        run: |\n', 1)[1].split('      - name:', 1)[0]
+        shell = '\n'.join(line[10:] for line in block.splitlines())
+        for event, marker, expected, warning in [('push', False, 'site', False),
+                                                ('pull_request', False, 'site', True),
+                                                ('pull_request', True, 'base', False)]:
+            if marker:
+                (self.root / 'base/scripts').mkdir(exist_ok=True)
+            envfile = self.root / 'env.txt'
+            envfile.write_text('')
+            result = subprocess.run(['bash', '-e', '-c', shell], capture_output=True, text=True,
+                                    env=dict(os.environ, EVENT_NAME=event,
+                                             GITHUB_WORKSPACE=str(self.root), GITHUB_ENV=str(envfile)))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(envfile.read_text().strip(), 'CHECKS=' + str(self.root / expected))
+            self.assertEqual('WARNING:' in result.stdout, warning)
+
+    def test_change_report(self):
+        self.assertIn('CHECK FILE CHANGES', self.workflow)
+        self.assertIn('continue-on-error: true', self.workflow)
+        for name in ['.github/', 'scripts/', '.htmlvalidate.json', '.pa11yci.json', 'legal/']:
+            self.assertIn("'" + name + "'", self.workflow)
+        self.assertIn("'--name-only', '-z'", self.workflow)
+        self.assertIn("print('\\n'.join(repr(p)", self.workflow)
+
+    def test_trusted_commands(self):
+        base = self.root / 'base'
+        root = self.root / 'site'
+        (root / 'index.html').write_text('candidate')
+        html = ci_checks.commands('html', base, root)[0]
+        self.assertIn(str(base / '.htmlvalidate.json'), html)
+        self.assertEqual(html[-2:], ['--', './index.html'])
+        command = ci_checks.commands('no-third-party', base, root)[0]
+        self.assertEqual(command[1:3], ['-I', '-B'])
+        self.assertEqual(command[3], str(base / 'scripts/check_no_third_party.py'))
+        self.assertEqual(command[-2:], ['--', str(root)])
+        self.assertIn(str(base / 'scripts/test_checks.py'), ci_checks.commands('links', base, root)[0])
+        self.assertEqual(ci_checks.commands('invariants', base, root)[0][3],
+                         str(base / 'scripts/check_invariants.py'))
+        self.assertIn('invariants]', self.workflow)
+
+    def test_runner_rejects_unsafe_discovery(self):
+        candidate = self.root / 'site'
+        for name in ASSETS:
+            p = candidate / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(SOURCE / name, p)
+        (candidate / '--version\nprobe.html').write_text('fixture')
+        output = io.StringIO()
+        with patch.object(sys, 'argv', ['ci_checks.py', '--root', str(candidate), '--', 'html']), \
+                patch.object(ci_checks, 'run') as run, contextlib.redirect_stdout(output):
+            self.assertEqual(ci_checks.main(), 1)
+        run.assert_not_called()
+        self.assertIn('Unsafe served path', output.getvalue())
+
+    def test_candidate_cannot_replace_validator(self):
+        base = self.root / 'base'
+        candidate = self.root / 'site'
+        shutil.copytree(SOURCE / 'scripts', base / 'scripts')
+        (candidate / 'scripts').mkdir()
+        (candidate / 'scripts/check_no_third_party.py').write_text('raise SystemExit(0)')
+        for name in ASSETS:
+            p = candidate / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(SOURCE / name, p)
+        p = candidate / 'index.html'
+        p.write_text(p.read_text().replace('</body>', '<script src="https://evil.test/x"></script></body>'))
+        result = subprocess.run(ci_checks.commands('no-third-party', base, candidate)[0], capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(b'forbidden <script>', result.stdout)
+
+    def test_accessibility_trusted_config(self):
+        base, candidate = self.root / 'base', self.root / 'site'
+        (base / '.pa11yci.json').write_text('{"defaults":{"trusted":true}}')
+        (candidate / '.pa11yci.json').write_text('{"defaults":{"trusted":false}}')
+        (candidate / '.nojekyll').write_text('')
+        (candidate / 'index.html').write_text('fixture')
+        server = MagicMock()
+        server.poll.return_value = None
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        seen = []
+
+        def capture(command, cwd):
+            config = Path(command[command.index('--config') + 1])
+            seen.append((json.loads(config.read_text()), config))
+            self.assertEqual(cwd, base)
+            self.assertFalse(config.is_relative_to(candidate))
+            self.assertEqual(command[-1], '--')
+
+        with patch.object(ci_checks.subprocess, 'Popen', return_value=server) as popen, \
+                patch.object(ci_checks, 'urlopen', return_value=response), \
+                patch.object(ci_checks, 'run', side_effect=capture):
+            ci_checks.accessibility(base, candidate)
+        self.assertEqual(seen[0][0]['defaults'], {'trusted': True, 'chromeLaunchConfig': {
+            'args': ['--force-prefers-reduced-motion']}})
+        self.assertEqual(seen[0][0]['urls'], ['http://127.0.0.1:8080/index.html'])
+        self.assertFalse(seen[0][1].exists())
+        self.assertIn('--', popen.call_args.args[0])
+        server.terminate.assert_called_once()
+
+
+class AuthorsTest(unittest.TestCase):
+    GOOD = '12345+Test-User@users.noreply.github.com'
+
+    def test_allowlist(self):
+        for email in [self.GOOD, '1+a@users.noreply.github.com', 'noreply@github.com']:
+            self.assertTrue(authors.allowed(email))
+        for email in ['private@example.test', 'a@users.noreply.github.com',
+                      '123+a@users.noreply.github.com.evil', '123+a@USERS.noreply.github.com',
+                      'no-reply@github.com', self.GOOD + '\n', '１２３+a@users.noreply.github.com']:
+            self.assertFalse(authors.allowed(email))
+
+    def test_ranges(self):
+        self.assertEqual(authors.revision_for_push('0' * 40, 'abc'), 'abc')
+        self.assertEqual(authors.revision_for_push('abc', 'def'), 'abc..def')
+        with self.assertRaises(ValueError):
+            authors.revision_for_push('', '')
+
+    def test_both_roles_all_commits_and_redaction(self):
+        result = subprocess.CompletedProcess([], 0,
+            'a\0private@example.test\0' + self.GOOD + '\0b\0' + self.GOOD + '\0hidden@example.test\0')
+        with patch.object(authors.subprocess, 'run', return_value=result) as call:
+            errors = authors.check(SOURCE, 'base..head')
+        self.assertEqual(len(errors), 2)
+        self.assertIn('a: author', errors[0])
+        self.assertIn('b: committer', errors[1])
+        self.assertNotIn('@', '\n'.join(errors))
+        self.assertEqual(call.call_args.args[0][-2:], ['base..head', '--'])
+        self.assertIn('--no-use-mailmap', call.call_args.args[0])
+
+    def test_fail_closed(self):
+        for result in [subprocess.CompletedProcess([], 1, ''), subprocess.CompletedProcess([], 0, 'malformed')]:
+            with patch.object(authors.subprocess, 'run', return_value=result):
+                self.assertTrue(authors.check(SOURCE, 'bad..head'))
+
+    def test_isolated_cli(self):
+        result = subprocess.run([sys.executable, '-I', '-B', str(SOURCE / 'scripts/check_authors.py'), '--help'],
+                                capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
